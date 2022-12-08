@@ -51,9 +51,17 @@
                   {%- endif -%}
                 </a>
               </li>
-              {% if site.blog_nav_title %}
+
+              <!-- Games -->
+              <li class="nav-item">
+                <a class="nav-link" href="{{ 'https://epicgameguy.itch.io/' | absolute_url }}">Games
+                  
+                </a>
+              </li>
+
               <!-- Blog -->
-              <!-- <li class="nav-item {% if page.url contains 'blog' %}active{% endif %}">
+              <!--{% if site.blog_nav_title %}
+              <li class="nav-item {% if page.url contains 'blog' %}active{% endif %}">
                 <a class="nav-link" href="{{ '/blog/' | relative_url }}">{{ site.blog_nav_title }}
                   {%- if page.url contains 'blog' -%}
                   <span class="sr-only">(current)</span>
@@ -94,8 +102,10 @@
               {%- endif -%}
               {%- endif -%}
               {% endfor -%}
-              {%- if site.enable_darkmode %}
 
+
+
+              {%- if site.enable_darkmode %}
               <!-- Toogle theme mode -->
               <li class="toggle-container">
                 <button id="light-toggle" title="Change theme">
