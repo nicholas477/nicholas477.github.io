@@ -19,13 +19,17 @@ You can do a youtube search for "engine simulator" and see all the [whacky](http
 
 I created an Unreal Engine plugin that integrates engine simulator into the chaos vechicle code. It does this by adding a  The component is called `EngineSimulatorWheeledVehicleMovementComponent`, it's subclassed from the chaos wheeled vehicle movement component, and the way it works is that each one of these components runs engine simulator in a separate thread, and it updates engine simulator with the chaos simulation parameters, reads out the torque and RPM, and also pipes out the engine sound into the game. Unfortunately it's pretty rudimentary, the clutch simulation built in to Engine Simulator is extremely basic, and it doesn't show the engine visualization yet, but I'm hoping other people will download the plugin and make something cool with it.
 
-#### Implementation Details/Unreal Issues
+<hr>
+
+# Implementation Details/Unreal Issues
 
 This plugin took about a week or two from start to finish, and most of the time I spent coding the plugin was just rewriting build scripts and doing small code changes to get EngineSimulator to compile as a static lib and work with Unreal. I'm going to skip over that stuff. There's other tutorials covering how to integrate third party libraries into Unreal, and heaps of engine code to look at too.
 
 What I am going to cover is how the Chaos vehicle sim integrates with Engine Sim and vice versa.
 
-#### Download Links
+<hr>
+
+# Download Links
 
 - [Plugin Link](https://github.com/nicholas477/EngineSimulatorPlugin)
 - [Example Project Link](git@github.com:nicholas477/EngineSimulatorGame.git)
