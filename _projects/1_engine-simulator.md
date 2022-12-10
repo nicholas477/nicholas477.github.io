@@ -7,9 +7,9 @@ importance: 1
 category: 2022
 ---
 
-# Overview
+##### - Download links are at the bottom of the article -
 
-Download links are at the bottom of the article.
+# Overview
 
 I don't remember how, but a few months ago my related videos feed got flooded with engine simulator videos. If you aren't familiar with engine simulator, it's a program that lets you describe engines using markup files and somehow it turns those text configs into a colorful 2d simulation and produces beautiful engine sounds. The creator's video describes it better than I can.
 
@@ -170,7 +170,7 @@ void UEngineSimulatorWheeledVehicleSimulation::ProcessMechanicalSimulation(float
 }
 {% endhighlight %}
 
-Since engine simulator is way too heavy to run synchronously, the plugin runs it asychronously in its own thread and does the reading and writing in reverse. First it reads the output from the last frame of the simulator, then it passes in the input to Engine Simulator, and finally it tells engine simulator to simulate. Thus, it'll get the output of the triggered simulation in the next frame. This means engine simulator always runs a frame behind the rest of the game, but I think it's a totally acceptable amount of latency, and is imperceptible in game.
+Since engine simulator is way too heavy to run synchronously, the plugin runs it asychronously in its own thread and does the reading and writing in reverse. First it reads the output from the last frame of the simulator, then it passes in the mechanical simulation input to Engine Simulator, and finally it triggers engine simulator to start simulating *at the end* of this frame. Thus, it'll get the output of the triggered simulation in the next frame. This means engine simulator always runs a frame behind the rest of the game, but I think it's a totally acceptable amount of latency, and is imperceptible in game.
 
 ## Sound Output
 
