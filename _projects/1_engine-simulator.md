@@ -7,6 +7,8 @@ importance: 1
 category: 2022
 ---
 
+# Overview
+
 Download links are at the bottom of the article.
 
 I don't remember how, but a few months ago my related videos feed got flooded with engine simulator videos. If you aren't familiar with engine simulator, it's a program that lets you describe engines using markup files and somehow it turns those text configs into a colorful 2d simulation and produces beautiful engine sounds. The creator's video describes it better than I can.
@@ -18,6 +20,8 @@ You can do a youtube search for "engine simulator" and see all the [whacky](http
 <iframe width="100%" height="480" src="https://www.youtube.com/embed/UxymULhZzSY" title="Engine Simulator inside Unreal Engine" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
 I created a plugin that integrates engine simulator into Unreal Engine 5's Chaos vehicle simulation. It does this by adding a component called `EngineSimulatorWheeledVehicleMovementComponent`. The component is subclassed from the Chaos vehicle simulation movement component and is a drop-in replacement for it. The way the Engine Simulator component works is that each of them runs their own copy of engine simulator in separate threads. When the mechanical simulation updates in Unreal, the component passes the Unreal Engine vehicle wheel RPM to engine simulator, reads the torque outputted from engine simulator, applys it to the wheels, and also pipes the engine sound into the game. The code that couples Unreal Engine to Engine Simulator is really that simple, and I go over the implementation details further below.
+
+## Drawbacks/issues
 
 [//]: # it's pretty rudimentary, the clutch simulation built in to Engine Simulator is extremely basic, and it doesn't show the engine visualization yet, but I'm hoping other people will download the plugin and make something cool with it.
 
