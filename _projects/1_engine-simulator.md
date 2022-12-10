@@ -1,7 +1,7 @@
 ---
 layout: page
 title: AngeTheGreat's Engine Simulator in Unreal Engine
-description: the world's greatest engine simulator meets a mediocre physics engine
+description: the world's greatest engine simulator meets a mediocre physics engine!
 img: assets/img/engine-simulator.jpg
 importance: 1
 category: 2022
@@ -19,15 +19,24 @@ You can do a youtube search for "engine simulator" and see all the [whacky](http
 
 <iframe width="100%" height="480" src="https://www.youtube.com/embed/UxymULhZzSY" title="Engine Simulator inside Unreal Engine" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
-I created a plugin that integrates engine simulator into Unreal Engine 5's Chaos vehicle simulation. It does this by adding a component called `EngineSimulatorWheeledVehicleMovementComponent`. The component is subclassed from the Chaos vehicle simulation movement component and is a drop-in replacement for it. The way the Engine Simulator component works is that each of them runs their own copy of engine simulator in separate threads. When the mechanical simulation updates in Unreal, the component passes the Unreal Engine vehicle wheel RPM to engine simulator, reads the torque outputted from engine simulator, applys it to the wheels, and also pipes the engine sound into the game. The code that couples Unreal Engine to Engine Simulator is really that simple, and I go over the implementation details further below.
+I created a plugin that integrates engine simulator into Unreal Engine 5's Chaos vehicle simulation. It does this by adding a component called `EngineSimulatorWheeledVehicleMovementComponent`. The component is subclassed from the Chaos vehicle simulation movement component and is a drop-in replacement for it. The way the Engine Simulator component works is that each of them runs their own copy of engine simulator in separate threads. When the mechanical simulation updates in Unreal, the component passes the Unreal Engine vehicle wheel RPM to engine simulator, reads the torque outputted from engine simulator, applys it to the wheels, and also pipes the engine sound into the game. The code that couples Unreal Engine to Engine Simulator is really that simple, and I go over the implementation details in the next section. But before you read on, let me list the drawbacks and let me explain the tagline to this article.
 
 ## Drawbacks/issues
 
-[//]: # it's pretty rudimentary, the clutch simulation built in to Engine Simulator is extremely basic, and it doesn't show the engine visualization yet, but I'm hoping other people will download the plugin and make something cool with it.
+So the plugin is honestly pretty rudimentary, and there's some issues I can't fix with Unreal unless I edit the engine code, which I don't want to. But first, plugin issues:
+
+- The clutch simulation built in to Engine Simulator is extremely basic. 
+It doesn't model slip, it just limits torque output. I could write some code to implement a proper clutch but I don't understand the physics side of Engine Simulator well enough to do that.
+
+- The engine visualization doesn't show up yet.
+This is an issue with my code, and i'm still figuring out how to implement this. In the future, I want the plugin to let people open the Engine Simulator GUI or a replica of it.
+
+- Chaos vehicles don't handle wheel spin/wheels not in contact with the ground
+The way the engine code is set up makes it impossible to apply torque to the wheels while in air or not in contact with the ground. I can't fix this without making engine modifications.
 
 <hr>
 
-# Implementation Details/Unreal Issues
+# Implementation Details
 
 This plugin took about a week or two from start to finish, and most of the time I spent coding the plugin was just doing annoying shit like rewriting build scripts to get Engine Simulator to compile as a static lib, and massaging the code to get Engine Simulator to work with Unreal. I'm going to skip over that stuff. There's other tutorials covering how to integrate third party libraries into Unreal, and heaps of engine code to look at too.
 
