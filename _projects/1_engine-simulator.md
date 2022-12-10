@@ -89,7 +89,7 @@ void UChaosWheeledVehicleSimulation::ProcessMechanicalSimulation(float DeltaTime
 }
 {% endhighlight %}
 
-You can see where it passes in engine rpm at line 19, where it reads out torque at line 28, and where it passes that torque to the wheels on line 40. Super easy. So to replace the engine, you just have to subclass `UChaosWheeledVehicleSimulation`, pass in the RPM, simulate, and read out the torque and apply it to the wheels. The plugin does something a bit different.
+You can see where it passes sets the engine rpm at line 19, where it reads out torque at line 28, and where it passes that torque to the wheels on line 40. Super easy. So to replace the engine, you just have to subclass `UChaosWheeledVehicleSimulation`, pass in the RPM, simulate, and read out the torque and apply it to the wheels. The plugin does something a bit different.
 
 {% highlight c++ linenos %}
 void UEngineSimulatorWheeledVehicleSimulation::ProcessMechanicalSimulation(float DeltaTime)
