@@ -19,7 +19,7 @@ You can do a youtube search for "engine simulator" and see all the [whacky](http
 
 <iframe width="100%" height="480" src="https://www.youtube.com/embed/UxymULhZzSY" title="Engine Simulator inside Unreal Engine" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
-I created a plugin that integrates engine simulator into Unreal Engine 5's Chaos vehicle simulation, the plugin does this by providing a movement component that runs Engine Simulator. To use Engine Simulator to drive your Unreal Engine vehicle, you just replace your `ChaosWheeledVehicleMovementComponent` with the `EngineSimulatorWheeledVehicleMovementComponent`. You can do this in blueprint using the subclass dropdown on your Chaos vehicle component.
+I created a plugin that integrates engine simulator into Unreal Engine 5's Chaos vehicle simulation, the plugin does this by providing a movement component that runs Engine Simulator. To use Engine Simulator to drive your Unreal Engine vehicle, you just replace your `ChaosWheeledVehicleMovementComponent` with the `EngineSimulatorWheeledVehicleMovementComponent`, and you can do this in blueprint using the subclass dropdown on your Chaos vehicle component. If you're interested in the implementation details, I go over them in the next section.
 
 [//]: # It does this by adding a component called `EngineSimulatorWheeledVehicleMovementComponent`. The component is subclassed from the Chaos vehicle simulation movement component and is a drop-in replacement for it. The way the Engine Simulator component works is that each of them runs their own copy of engine simulator in separate threads. When the mechanical simulation updates in Unreal, the component passes the Unreal Engine vehicle wheel RPM to engine simulator, reads the torque outputted from engine simulator, applys it to the wheels, and also pipes the engine sound into the game. The code that couples Unreal Engine to Engine Simulator is really that simple, and I go over the implementation details in the next section. But before you read on, let me list the drawbacks and let me explain the tagline to this article.
 
@@ -34,7 +34,7 @@ So the plugin is honestly pretty rudimentary, and there's some issues I can't fi
     - This is an issue with my code, and i'm still figuring out how to implement this. In the future, I want the plugin to let people open the Engine Simulator GUI or a replica of it.
 
 - Chaos vehicles don't handle wheel spin/wheels not in contact with the ground
-    - The way the engine code is set up makes it impossible to apply torque to the wheels while in air or not in contact with the ground. I can't fix this without making engine modifications.
+    - The way the engine code is set up makes it impossible to apply torque to the wheels while in air or not in contact with the ground. I can't fix this without making engine modifications. The plugin currently disengages the clutch when the wheels aren't in contact or when they are spinning, and it lets the engine rev.
 
 <hr>
 
@@ -203,11 +203,9 @@ void FEngineSimulator::FillAudio(USoundWaveProcedural* Wave, const int32 Samples
 
 Passing `OutputEngineSound` to a sound component in the game world and calling `play` on the component plays the engine simulator sound in game. From there you can apply sound modifiers to the engine noise to EQ it, reverb it, whatever. Unfortunately as of Unreal Engine 5.0.3 you can't use `USoundWaveProcedural` as an input to a metasound, but I think they're fixing this in 5.1, so you'll be able to manipulate Engine Simulator using Metasound 😎
 
-<hr>
-
 ## Engine Simulator side
 
-blah blah blah
+Connecting Engine Simulator to Unreal on the Engine Simulator side was dead simple. Engine Simulator comes with a class `Dynamometer` that connects to the engine crankshaft, spins at a set rotational speed, and measures the torque output. Getting it to work was as easy as passing in the RPM, simulating, and reading out the torque.
 
 <hr>
 
