@@ -26,13 +26,13 @@ I created a plugin that integrates engine simulator into Unreal Engine 5's Chaos
 So the plugin is honestly pretty rudimentary, and there's some issues I can't fix with Unreal unless I edit the engine code, which I don't want to. But first, plugin issues:
 
 - The clutch simulation built in to Engine Simulator is extremely basic. 
-It doesn't model slip, it just limits torque output. I could write some code to implement a proper clutch but I don't understand the physics side of Engine Simulator well enough to do that.
+    - It doesn't model slip, it just limits torque output. I could write some code to implement a proper clutch but I don't understand the physics side of Engine Simulator well enough to do that.
 
 - The engine visualization doesn't show up yet.
-This is an issue with my code, and i'm still figuring out how to implement this. In the future, I want the plugin to let people open the Engine Simulator GUI or a replica of it.
+    - This is an issue with my code, and i'm still figuring out how to implement this. In the future, I want the plugin to let people open the Engine Simulator GUI or a replica of it.
 
 - Chaos vehicles don't handle wheel spin/wheels not in contact with the ground
-The way the engine code is set up makes it impossible to apply torque to the wheels while in air or not in contact with the ground. I can't fix this without making engine modifications.
+    - The way the engine code is set up makes it impossible to apply torque to the wheels while in air or not in contact with the ground. I can't fix this without making engine modifications.
 
 <hr>
 
