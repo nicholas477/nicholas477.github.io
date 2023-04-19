@@ -17,7 +17,7 @@ I don't remember how, but a few months ago my related videos feed got flooded wi
 
 You can do a youtube search for "engine simulator" and see all the [whacky](https://youtu.be/PZ9ynEH9YjM) [shit](https://youtu.be/dMorJRNkWhU?list=PLViptfOL1RMftTKEBjvW-1tejbtFq21Cw) other people have done with it. While these videos are cool and the simulator is incredible, it really feels like it's begging to be put into a game engine. So that's what I did.
 
-<iframe width="100%" height="480" src="https://www.youtube.com/embed/UxymULhZzSY" title="Engine Simulator inside Unreal Engine" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+<iframe width="2544" height="1198" src="https://www.youtube.com/embed/_D4XjEji0_E" title="Engine Simulator in Unreal Engine" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture;" allowfullscreen></iframe>
 
 I created a plugin that integrates engine simulator into Unreal Engine 5's Chaos vehicle simulation, the plugin does this by providing a movement component that runs Engine Simulator. To use Engine Simulator to drive your Unreal Engine vehicle, you just replace your `ChaosWheeledVehicleMovementComponent` with the `EngineSimulatorWheeledVehicleMovementComponent`, and you can do this in blueprint using the subclass dropdown on your Chaos vehicle component. If you're interested in the implementation details, I go over them in the next section.
 
