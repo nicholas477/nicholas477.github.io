@@ -2,7 +2,7 @@
 layout: page
 title: projects
 permalink: /projects/
-description:
+description: Some of these projects i've put in repos, some of these are just cool things I wanted to talk about.
 nav: true
 nav_order: 2
 display_categories: [2023, 2022]
