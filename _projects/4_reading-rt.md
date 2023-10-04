@@ -9,7 +9,7 @@ category: 2023
 
 [Unreal has a built-in function for reading pixels from a render target](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Source/Runtime/Engine/Private/UnrealClient.cpp#L61) but its awful. This single call blocks the game thread and can take milliseconds to complete since it flushes the RHI command queue.
 
-<div class="row">
+<div class="row justify-content-sm-center">
     <div class="col-sm mt-3 mt-md-0">
         {% include figure.html path="assets/img/read-pixels-sycnhronous.png" title="Synchronous Pixel Reading" class="img-fluid rounded z-depth-1" %}
     </div>
@@ -22,7 +22,7 @@ I found other people complaining on the forums about this, but I couldn't find a
 
 Bringing all this together, you can take RT pixel reading from a few milliseconds down to about 40 microseconds of total CPU time. If you cache the temporary texture you can probably shave off another 20 microseconds, but this is good enough for me for now. The big tradeoff to using this asynchronous method is that the read now takes 3 frames to return to the game thread instead of being done in the same frame, so write your code with that in mind.
 
-<div class="row">
+<div class="row justify-content-sm-center">
     <div class="col-sm mt-3 mt-md-0">
         {% include figure.html path="assets/img/read-pixels-asycnhronous.png" title="Asynchronous Pixel Reading" class="img-fluid rounded z-depth-1" %}
     </div>
