@@ -1,11 +1,10 @@
 ---
 layout: page
-title: project 3
-description: a project that redirects to another website
+title: Multipass Post Processing Effects in Unreal
+description: 
 img: assets/img/7.jpg
-redirect: https://unsplash.com
-importance: 3
-category: work
+importance: 0
+category: WIP
 ---
 
 Every project has a beautiful feature showcase page.
