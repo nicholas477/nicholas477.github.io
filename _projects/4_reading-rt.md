@@ -24,7 +24,7 @@ Unfortunately, the mapping function this method uses, `FRHICommandListImmediate:
 
 But using this function presents yet another problem. Since this function doesn't flush the command queue you can run into GPU/CPU synchronization issues. If you call `MapStagingSurface` right after the texture copy, then you'll end up reading garbage or old data. This is where [render fences](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nn-d3d12-id3d12fence) come in. If you're unfamiliar with what a render fence is, it's an object you can push onto the command queue that signals when the commands preceeding it are completed by the GPU. On the CPU side, you can poll the fence to check if its done or wait for it to be done. Using this, you can avoid flushing the GPU and instead just periodically check if the commands are done.
 
-Setting up the texture copy code to use the render fence looks like this:
+So to avoid the aformention flush, I set up my texture creation and copy to use a render fence:
 
 {% highlight c++ linenos %}
 FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
@@ -46,7 +46,7 @@ FGPUFenceRHIRef Fence = RHICreateGPUFence(TEXT("AsyncRTReadback"));
 RHICmdList.WriteGPUFence(Fence);
 {% endhighlight %}
 
-And to finish up the async read I just held a reference to the temporary texture and the render fence, polled the fence on game tick, and mapped the texture read.
+And to make sure the map runs after the texture is copied I just held a reference to the temporary texture and the render fence, polled the fence on game tick, and _then_ mapped the texture read.
 
 {% highlight c++ linenos %}
 void UAsyncReadRTAction::Tick()
