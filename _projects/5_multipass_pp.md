@@ -9,7 +9,7 @@ category: Unreleased
 
 I wanted to make the security cameras in my game look old. In particular, I wanted the cameras to have an interlacing effect and a light streaking effect. You can see what i'm talking about in the video below.
 
-<iframe width="100%" height="480" src="https://www.youtube.com/watch?v=pAb1qpXoXck" title="Newvicon tube video camera light streaking effect" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+<iframe width="100%" height="480" src="https://www.youtube.com/embed/pAb1qpXoXck" title="Newvicon tube video camera light streaking effect" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
 I tried doing this at first with [Unreal's post processing materials](https://docs.unrealengine.com/5.3/en-US/post-process-materials-in-unreal-engine/), but they are pretty limited. You can't write to arbitrary render targets with the effects, so doing the aforementioned effects is impossible. The rendering side of Unreal is pretty locked down and normally something like this wouldn't be possible without modifying the engine, but fortunately Unreal has a way to extend the renderer without modifying the engine. These extensions are called [Scene View Extensions](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Source/Runtime/Engine/Public/SceneViewExtension.h#L99C9-L99C9), and they let you hook into different parts of the renderer.
 
