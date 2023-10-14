@@ -65,7 +65,7 @@ turns into this spaghetti nightmare:
     </div>
 </div>
 
-It's an odd design choice for an engine that has serialization built in. So I decided to use that built in serialization and write my own analytics system that serializes objects to json and sends it wherever. But I noticed that while Unreal has support for UStruct serialzation to json, it does not have support for UObjects. So I wrote a plugin for that.
+It's an odd design choice for an engine that has serialization built in. So I decided to use that built in serialization and write my own analytics system that serializes objects to json and sends it wherever. But I noticed that while Unreal has support for UStruct serialization to json, it does not have support for UObjects. So I wrote a plugin for that.
 
 Since the property to json serialization is already included in the engine, the object serialization code itself is pretty short, about 100 lines total.
 

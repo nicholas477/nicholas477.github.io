@@ -21,7 +21,7 @@ You can do a youtube search for "engine simulator" and see all the [whacky](http
 
 I created a plugin that integrates engine simulator into Unreal Engine 5's Chaos vehicle simulation, the plugin does this by providing a movement component that runs Engine Simulator. To use Engine Simulator to drive your Unreal Engine vehicle, you just replace your `ChaosWheeledVehicleMovementComponent` with the `EngineSimulatorWheeledVehicleMovementComponent`, and you can do this in blueprint using the subclass dropdown on your Chaos vehicle component. If you're interested in the implementation details, I go over them in the next section.
 
-[//]: # It does this by adding a component called `EngineSimulatorWheeledVehicleMovementComponent`. The component is subclassed from the Chaos vehicle simulation movement component and is a drop-in replacement for it. The way the Engine Simulator component works is that each of them runs their own copy of engine simulator in separate threads. When the mechanical simulation updates in Unreal, the component passes the Unreal Engine vehicle wheel RPM to engine simulator, reads the torque outputted from engine simulator, applys it to the wheels, and also pipes the engine sound into the game. The code that couples Unreal Engine to Engine Simulator is really that simple, and I go over the implementation details in the next section. But before you read on, let me list the drawbacks and let me explain the tagline to this article.
+[//]: # It does this by adding a component called `EngineSimulatorWheeledVehicleMovementComponent`. The component is subclassed from the Chaos vehicle simulation movement component and is a drop-in replacement for it. The way the Engine Simulator component works is that each of them runs their own copy of engine simulator in separate threads. When the mechanical simulation updates in Unreal, the component passes the Unreal Engine vehicle wheel RPM to engine simulator, reads the torque outputted from engine simulator, applies it to the wheels, and also pipes the engine sound into the game. The code that couples Unreal Engine to Engine Simulator is really that simple, and I go over the implementation details in the next section. But before you read on, let me list the drawbacks and let me explain the tagline to this article.
 
 ## Drawbacks/issues
 
@@ -46,7 +46,7 @@ What I am going to cover is how the Chaos vehicle sim integrates with Engine Sim
 
 ## Chaos side
 
-Bolting on a different engine to the Chaos simulation side is surpisingly easy. The engine simulation part of Chaos vehicles is almost entirely contained in the function `UChaosWheeledVehicleSimulation::ProcessMechanicalSimulation(float DeltaTime)`:
+Bolting on a different engine to the Chaos simulation side is surprisingly easy. The engine simulation part of Chaos vehicles is almost entirely contained in the function `UChaosWheeledVehicleSimulation::ProcessMechanicalSimulation(float DeltaTime)`:
 
 {% highlight c++ linenos %}
 void UChaosWheeledVehicleSimulation::ProcessMechanicalSimulation(float DeltaTime)
@@ -181,7 +181,7 @@ void UEngineSimulatorWheeledVehicleSimulation::ProcessMechanicalSimulation(float
 }
 {% endhighlight %}
 
-Since engine simulator is way too heavy to run synchronously, the plugin runs it asychronously in its own thread and does the reading and writing in reverse. First it reads the output from the last frame of the simulator, then it passes in the mechanical simulation input to Engine Simulator, and finally it triggers engine simulator to start simulating *at the end* of this frame. Thus, it'll get the output of the triggered simulation in the next frame. This means engine simulator always runs a frame behind the rest of the game, but I think it's a totally acceptable amount of latency, and is imperceptible in game.
+Since engine simulator is way too heavy to run synchronously, the plugin runs it asynchronously in its own thread and does the reading and writing in reverse. First it reads the output from the last frame of the simulator, then it passes in the mechanical simulation input to Engine Simulator, and finally it triggers engine simulator to start simulating *at the end* of this frame. Thus, it'll get the output of the triggered simulation in the next frame. This means engine simulator always runs a frame behind the rest of the game, but I think it's a totally acceptable amount of latency, and is imperceptible in game.
 
 ## Sound Output
 
@@ -201,7 +201,7 @@ void FEngineSimulator::FillAudio(USoundWaveProcedural* Wave, const int32 Samples
 }
 {% endhighlight %}
 
-Passing `OutputEngineSound` to a sound component in the game world and calling `play` on the component plays the engine simulator sound in game. From there you can apply sound modifiers to the engine noise to EQ it, reverb it, whatever. Unfortunately as of Unreal Engine 5.0.3 you can't use `USoundWaveProcedural` as an input to a metasound, but I think they're fixing this in 5.1, so you'll be able to manipulate Engine Simulator using Metasound 😎
+Passing `OutputEngineSound` to a sound component in the game world and calling `play` on the component plays the engine simulator sound in game. From there you can apply sound modifiers to the engine noise to EQ it, reverb it, whatever. Unfortunately as of Unreal Engine 5.0.3 you can't use `USoundWaveProcedural` as an input to a Metasound, but I think they're fixing this in 5.1, so you'll be able to manipulate Engine Simulator using Metasound 😎
 
 ## Engine Simulator side
 

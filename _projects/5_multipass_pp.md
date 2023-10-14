@@ -7,13 +7,13 @@ importance: 0
 category: Unreleased
 ---
 
-I wanted to make the security cameras in my game look old. In particular, I wanted the cameras to have an interlacing effect and a light streaking effect. You can see what i'm talking about in the video below.
+I wanted to make the security cameras in my game look old. I wanted the cameras to have an interlacing effect and a light streaking effect like old CCD cameras. You can see what i'm talking about in the video below.
 
 <iframe width="100%" height="480" src="https://www.youtube.com/embed/pAb1qpXoXck" title="Newvicon tube video camera light streaking effect" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
-I tried doing this at first with [Unreal's post processing materials](https://docs.unrealengine.com/5.3/en-US/post-process-materials-in-unreal-engine/), but they are pretty limited. You can't write to arbitrary render targets with the effects, so doing any sort of accumulative effects (like writing half the horizontal lines or doing motion blur) are impossible. The rendering side of Unreal is pretty locked down and normally something like this wouldn't be possible without modifying the engine, but fortunately Unreal has a way to extend the renderer without modifying the engine. These extensions are called [Scene View Extensions](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Source/Runtime/Engine/Public/SceneViewExtension.h#L99C9-L99C9), and they basically let you hook into different parts of the renderer.
+I tried doing this at first with [Unreal's post processing materials](https://docs.unrealengine.com/5.3/en-US/post-process-materials-in-unreal-engine/), but they are pretty limited. You can't read the last frame or write to arbitrary render targets with the effects, so doing any sort of accumulative effects (like writing half the horizontal lines for interlacing or doing motion blur) are impossible. The rendering side of Unreal is generally pretty locked down and normally something like this wouldn't be possible without modifying the engine, but fortunately Unreal has a way to extend the renderer without modifying the engine. These extensions are called [Scene View Extensions](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Source/Runtime/Engine/Public/SceneViewExtension.h#L99C9-L99C9).
 
-Scene view extensions are incredbly flexible, and I've actually used it before to implement custom render passes and a [volumetric fog effect](https://youtu.be/gCus1za5iho).
+Scene view extensions are programmable rendering extensions that let you run rendering code at different parts of the rendering pipeline. You can run code when the renderer sets up a view, after the bass pass is done, or when post processing is rendered. I've actually used them before to implement a [volumetric fog effect](https://youtu.be/gCus1za5iho) and a custom mesh render pass.
 
 <div class="row">
     <div class="col-sm mt-3 mt-md-0">
@@ -21,11 +21,12 @@ Scene view extensions are incredbly flexible, and I've actually used it before t
     </div>
 </div>
 <div class="caption">
-    Using a scene view extension, I wrote a custom mesh render pass that would draw meshes after motion blur and SSR, but before bloom.
+    Using a scene view extension, I was able to add a mesh render pass that would draw after SSR and motion blur, but before bloom.
 </div>
 
+So using extensions, you can add in a post processing pass with much more control than the material post processing passes built into the engine. You have full control over creating render targets, what shaders are ran, what parameters are passed to the shaders, what passes are ran, etc. You can basically do anything.
 
-I think digging through the engine and seeing what Epic has done with it is a good place to familiarize yourself with it. They draw the [AR camera overlay](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Plugins/Experimental/RemoteSession/Source/RemoteSession/Private/Channels/RemoteSessionARCameraChannel.cpp#L136C21-L136C21) with it, . You can add in a post processing pass with much more control than the material post processing passes built into the engine. You have full control over creating render targets, what shaders are ran, what parameters are passed to the shaders, what passes are ran. You can basically do anything.
+But the drawback is that it isn't as simple as the material post processing passes. You have to write rendering code and interface it with game code, and there's a lot of boilerplate code that you have to write just to set up the render targets and insert a post processing pass.
 
 So anyway what I wanted to make was an interlacing sorta shader that would alternate drawing half the horizontal lines each frame. The built-in post processing thing in Unreal doesn't let you access the last frame's image so you can composite the next frame onto it, so that make it untenable as a solution. And to be fair, using the scene view extension doesn't let you access the last frame, but what you can do is keep a render target to do temporal effects. So for the interlacing effect, I just wrote half the horizontal lines to the render target each frame and kept the other half from the last frame.
 

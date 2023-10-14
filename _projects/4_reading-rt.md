@@ -22,9 +22,9 @@ I found other people complaining on the forums about this, but I couldn't find a
 
 Unfortunately, the mapping function this method uses, `FRHICommandListImmediate::MapStagingSurface`, still flushes the command list. But I dug into the engine code a bit more and found out that the function actually calls `FDynamicRHI::RHIMapStagingSurface` after flushing. Therefore you can get around flushing by just using `FDynamicRHI::RHIMapStagingSurface` instead.
 
-But using this function presents yet another problem. Since this function doesn't flush the command queue you can run into GPU/CPU synchronization issues. If you call `MapStagingSurface` right after the texture copy, then you'll end up reading garbage or old data. This is where [render fences](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nn-d3d12-id3d12fence) come in. If you're unfamiliar with what a render fence is, it's an object you can push onto the command queue that signals when the commands preceeding it are completed by the GPU. On the CPU side, you can poll the fence to check if its done or wait for it to be done. Using this, you can avoid flushing the GPU and instead just periodically check if the commands are done.
+But using this function presents yet another problem. Since this function doesn't flush the command queue you can run into GPU/CPU synchronization issues. If you call `MapStagingSurface` right after the texture copy, then you'll end up reading garbage or old data. This is where [render fences](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nn-d3d12-id3d12fence) come in. If you're unfamiliar with what a render fence is, it's an object you can push onto the command queue that signals when the commands preceding it are completed by the GPU. On the CPU side, you can poll the fence to check if its done or wait for it to be done. Using this, you can avoid flushing the GPU and instead just periodically check if the commands are done.
 
-So to avoid the aformention flush, I set up my texture creation and copy to use a render fence:
+So to avoid the aforementioned flush, I set up my texture creation and copy to use a render fence:
 
 {% highlight c++ linenos %}
 FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
