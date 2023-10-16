@@ -34,9 +34,19 @@ So using extensions, you can add in a post processing pass with much more contro
 
 But the drawback is that it isn't as simple as the material post processing passes. You have to write rendering code and interface it with game code, which can be a bit daunting if you're unfamiliar with writing multithreaded code in Unreal.
 
-And since the view extensions are very general purpose, they require a lot of boilerplate code to set up the render targets and insert a post processing pass. There's also some oddities with the renderer that you have to keep in mind, such as regional rendering and how render targets are presented. I don't think these oddities are interesting enough to go over in full detail, but I will explain regional rendering.
+And since the view extensions are very general purpose, they require a lot of boilerplate code to set up the render targets and insert a post processing pass. There's also some oddities with the renderer that you have to keep in mind, such as regional rendering and how render targets are presented. I don't think these oddities are interesting enough to go over in full detail, but I will explain regional rendering. You can read about it at the bottom of the article.
 
-### Regional Rendering Explained
+But getting this to actually work is a lot easier said than done. I ran into issues with how unreal renders regions in the editor, with how the render target is actually presented, and how to properly handle multiple views.
+
+So Unreal has these things called SceneViewFamilies, which hold a group of SceneViews into the scene. Each SceneView boils down to a different projection into the scene. The post processing extension needs to keep track of each scene view since they will all have each have to have their own unique RT and post processing settings. This was the first hurdle I had to jump over.
+
+If you're not familiar with regional rendering, its where only a smaller rectangle on a render target is read and written to. Unreal does regional rendering inside the editor, what it does is when you scale down the size of the editor window it doesn't scale down the render target, just changes the region of the render target that is written to.
+
+The issue I had with how the render target is actually presented is that sometimes the engine gives you a render target to write to, and sometimes it doesn't. Sometimes the post process pass would need to be enabled but bypassed based on what the post processing settings were, and the function that lots of other scene view extensions used for bypassing the post process pass did not work when the engine gave you a target to write to. The bypass code didn't copy the render target to the output, and instead just returned the render target output, which caused rendering to appear as if it was frozen. Luckily, once I figured out this was the case, I wrote my own bypass function that either writes to the correct output RT or copies the old one.
+
+I felt like a lot of this project was just dealing with boilerplate, I thought it would be good to write a framework for post process effects using this method. My interlacing effect uses this framework, and just sets up a post processing shader, overrides the rendering function and the per view data. 
+
+#### Regional Rendering Explained
 
 When you make the editor viewport bigger, the render targets used for rendering are all resized to a bigger size, but the same is not true when you make the viewport smaller. The editor doesn't resize the render targets smaller, but instead just renders to a smaller region of the render targets.
 
@@ -64,13 +74,3 @@ float3 CurFrame = Texture2DSample(InputTexture, InputSampler, UV).rgb;
 	
 float3 Output = lerp(CurFrame, PrevFrame, Weight);
 {% endhighlight %}
-
-But getting this to actually work is a lot easier said than done. I ran into issues with how unreal renders regions in the editor, with how the render target is actually presented, and how to properly handle multiple views.
-
-So Unreal has these things called SceneViewFamilies, which hold a group of SceneViews into the scene. Each SceneView boils down to a different projection into the scene. The post processing extension needs to keep track of each scene view since they will all have each have to have their own unique RT and post processing settings. This was the first hurdle I had to jump over.
-
-If you're not familiar with regional rendering, its where only a smaller rectangle on a render target is read and written to. Unreal does regional rendering inside the editor, what it does is when you scale down the size of the editor window it doesn't scale down the render target, just changes the region of the render target that is written to.
-
-The issue I had with how the render target is actually presented is that sometimes the engine gives you a render target to write to, and sometimes it doesn't. Sometimes the post process pass would need to be enabled but bypassed based on what the post processing settings were, and the function that lots of other scene view extensions used for bypassing the post process pass did not work when the engine gave you a target to write to. The bypass code didn't copy the render target to the output, and instead just returned the render target output, which caused rendering to appear as if it was frozen. Luckily, once I figured out this was the case, I wrote my own bypass function that either writes to the correct output RT or copies the old one.
-
-I felt like a lot of this project was just dealing with boilerplate, I thought it would be good to write a framework for post process effects using this method. My interlacing effect uses this framework, and just sets up a post processing shader, overrides the rendering function and the per view data. 
