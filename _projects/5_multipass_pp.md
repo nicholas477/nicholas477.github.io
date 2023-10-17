@@ -9,17 +9,17 @@ category: Unreleased
 
 # Overview
 
-I wanted to make the security cameras in my game look old. I wanted the cameras to have an interlacing effect and a light streaking effect like old CCD cameras. You can see what i'm talking about in the video below.
+I wanted to make the security cameras in my game to look like old CCD cameras. In particular, I wanted the cameras to look low res, deinterlaced, and I wanted them to have a light streaking effect. You can see what i'm talking about in the video below.
 
 <iframe width="100%" height="480" src="https://www.youtube.com/embed/pAb1qpXoXck" title="Newvicon tube video camera light streaking effect" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
-I decided that I would do the interlacing effect by just writing half the horizontal lines each frame, and I would do the light streaking by combining accumulation motion blur with a brightness mask.
+I decided that I would do the deinterlacing effect by just writing half the horizontal lines each frame, and I would do the light streaking by combining accumulation motion blur with a brightness mask.
 
-I tried doing this at first with [Unreal's post processing materials](https://docs.unrealengine.com/5.3/en-US/post-process-materials-in-unreal-engine/), but they are pretty limited. You can't read the last frame or write to arbitrary render targets with the effects, so doing any sort of accumulative effects (like writing half the horizontal lines for interlacing or doing motion blur) are impossible. The rendering side of Unreal is generally pretty locked down and normally something like this wouldn't be possible without modifying the engine, but fortunately Unreal has a way to extend the renderer without modifying the engine. These extensions are called [Scene View Extensions](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Source/Runtime/Engine/Public/SceneViewExtension.h#L99C9-L99C9).
+Once I decided how I was going to do the effects, I tried using [Unreal's post processing materials](https://docs.unrealengine.com/5.3/en-US/post-process-materials-in-unreal-engine/) to implement them, but they are pretty limited. You can't read the last frame or write to arbitrary render targets with the effects, so doing any sort of accumulative effects (like motion blur) are impossible. The rendering side of Unreal is generally pretty locked down and normally something like this wouldn't be possible without modifying the engine, but fortunately Unreal has a way to extend the renderer without modifying the engine. These extensions are called [Scene View Extensions](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Source/Runtime/Engine/Public/SceneViewExtension.h#L99C9-L99C9).
 
 ## Scene View Extensions
 
-Scene view extensions are programmable rendering extensions that let you run rendering code at different parts of the rendering pipeline. You can run code when the renderer sets up a view, after the bass pass is done, or when post processing is rendered. I've actually used them before to implement a [volumetric fog effect](https://youtu.be/gCus1za5iho) and a custom mesh render pass.
+Scene view extensions are programmable rendering extensions that let you run rendering code at different parts of the rendering pipeline. They also let you add in a pass to the post processing stack at different parts of the post processing pipeline. I've actually used them before to implement a [volumetric fog effect](https://youtu.be/gCus1za5iho) and a custom mesh render pass.
 
 <div class="row">
     <div class="col-sm mt-3 mt-md-0">
@@ -32,19 +32,12 @@ Scene view extensions are programmable rendering extensions that let you run ren
 
 So using extensions, you can add in a post processing pass with much more control than the material post processing passes built into the engine. You have full control over creating render targets, what shaders are ran, what parameters are passed to the shaders, what passes are ran, etc. You can basically do anything. 
 
-But the drawback is that it isn't as simple as the material post processing passes. You have to write rendering code and interface it with game code, which can be a bit daunting if you're unfamiliar with writing multithreaded code in Unreal.
+But the drawback is that it isn't as simple as the material post processing passes. You have to write rendering code and interface it with game code, which can be a bit daunting if you're unfamiliar with writing multithreaded code in Unreal. And also since the view extensions are very general purpose, they require a lot of boilerplate code to set up the render targets and insert a post processing pass. There's also some oddities with the renderer that you have to keep in mind, such as regional rendering and how render targets are presented. I don't think these issues are too interesting, so I went over them in the `Issues` section at the bottom of the article. Instead I will go over how I implemented the post process pass.
 
-And since the view extensions are very general purpose, they require a lot of boilerplate code to set up the render targets and insert a post processing pass. There's also some oddities with the renderer that you have to keep in mind, such as regional rendering and how render targets are presented. I don't think these oddities are interesting enough to go over in full detail, but I will explain regional rendering. You can read about it at the bottom of the article.
+#### Implementing post processing passes
+You can find examples of scene view extensions in the engine, but none of them seem to 
 
-But getting this to actually work is a lot easier said than done. I ran into issues with how unreal renders regions in the editor, with how the render target is actually presented, and how to properly handle multiple views.
-
-So Unreal has these things called SceneViewFamilies, which hold a group of SceneViews into the scene. Each SceneView boils down to a different projection into the scene. The post processing extension needs to keep track of each scene view since they will all have each have to have their own unique RT and post processing settings. This was the first hurdle I had to jump over.
-
-If you're not familiar with regional rendering, its where only a smaller rectangle on a render target is read and written to. Unreal does regional rendering inside the editor, what it does is when you scale down the size of the editor window it doesn't scale down the render target, just changes the region of the render target that is written to.
-
-The issue I had with how the render target is actually presented is that sometimes the engine gives you a render target to write to, and sometimes it doesn't. Sometimes the post process pass would need to be enabled but bypassed based on what the post processing settings were, and the function that lots of other scene view extensions used for bypassing the post process pass did not work when the engine gave you a target to write to. The bypass code didn't copy the render target to the output, and instead just returned the render target output, which caused rendering to appear as if it was frozen. Luckily, once I figured out this was the case, I wrote my own bypass function that either writes to the correct output RT or copies the old one.
-
-I felt like a lot of this project was just dealing with boilerplate, I thought it would be good to write a framework for post process effects using this method. My interlacing effect uses this framework, and just sets up a post processing shader, overrides the rendering function and the per view data. 
+## Issues
 
 #### Regional Rendering Explained
 
@@ -73,4 +66,67 @@ float3 PrevFrame = Texture2DSample(MotionBlurTexture, MotionBlurSampler, OutputU
 float3 CurFrame = Texture2DSample(InputTexture, InputSampler, UV).rgb;
 	
 float3 Output = lerp(CurFrame, PrevFrame, Weight);
+{% endhighlight %}
+
+#### Presenting RTs
+
+Depending on the post processing settings, I would have to enable my post processing pass but never actually run the post processing shader. When this happened, the screen would be frozen and I had no idea why. I was using a post processing bypass function used by scene view extensions in the engine called `ReturnUntouchedSceneColorForPostProcessing`, and it seems like it should have worked.
+
+The issue I had with how the output render target is actually presented is that sometimes the engine gives you a render target to write to, and sometimes it doesn't. The bypass code I found in the engine's scene view extensions don't take this into account, and I was scratching my head for a while trying to figure out why it doesn't work.
+
+The engine's bypass code looks like this:
+
+{% highlight c++ linenos %}
+/** 
+* A helper function that extracts the right scene color texture, untouched, to be used further in post processing. 
+*/
+FScreenPassTexture ReturnUntouchedSceneColorForPostProcessing(const FPostProcessMaterialInputs& InOutInputs)
+{
+	if (InOutInputs.OverrideOutput.IsValid())
+	{
+		return InOutInputs.OverrideOutput;
+	}
+	else
+	{
+		/** We don't want to modify scene texture in any way. We just want it to be passed back onto the next stage. */
+		FScreenPassTexture SceneTexture = const_cast<FScreenPassTexture&>(InOutInputs.Textures[(uint32)EPostProcessMaterialInput::SceneColor]);
+		return SceneTexture;
+	}
+}
+{% endhighlight %}
+
+You can see it just returns either the output override RT or the inputted scene texture if the override output doesn't exist. The issue with this is that the override output RT doesn't actually have anything written to it if it does exist, so if you present it then it just looks like the scene rendering froze. Once I figured out that that was the issue, I added a pass that copies the scene color RT to the output override and fixed the issue. You can see this implemented in the code below:
+
+{% highlight c++ linenos %}
+FScreenPassTexture ReturnUntouchedSceneColorForPostProcessing(FRDGBuilder& GraphBuilder, const FSceneView& View, const FViewInfo& ViewInfo, const FPostProcessMaterialInputs& InOutInputs)
+{
+	// If OverrideOutput is valid, we need to write to it, even if we're bypassing pp rendering
+	if (InOutInputs.OverrideOutput.IsValid())
+	{
+		FCopyRectPS::FParameters* Parameters = GraphBuilder.AllocParameters<FCopyRectPS::FParameters>();
+		Parameters->InputTexture = InOutInputs.GetInput(EPostProcessMaterialInput::SceneColor).Texture;
+		Parameters->InputSampler = TStaticSamplerState<>::GetRHI();
+		Parameters->RenderTargets[0] = InOutInputs.OverrideOutput.GetRenderTargetBinding();
+
+		const FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(View.FeatureLevel);
+
+		TShaderMapRef<FCopyRectPS> CopyPixelShader(GlobalShaderMap);
+		TShaderMapRef<FScreenPassVS> ScreenPassVS(GlobalShaderMap);
+
+		const FScreenPassTextureViewport InputViewport(InOutInputs.GetInput(EPostProcessMaterialInput::SceneColor));
+		const FScreenPassTextureViewport OutputViewport(InOutInputs.OverrideOutput);
+
+		FRHIBlendState* CopyBlendState = FScreenPassPipelineState::FDefaultBlendState::GetRHI();
+		FRHIDepthStencilState* DepthStencilState = FScreenPassPipelineState::FDefaultDepthStencilState::GetRHI();
+		AddDrawScreenPass(GraphBuilder, FRDGEventName(TEXT("ReturnUntouchedSceneColorForPostProcessing")), ViewInfo, OutputViewport, InputViewport, ScreenPassVS, CopyPixelShader, CopyBlendState, DepthStencilState, Parameters, EScreenPassDrawFlags::None);
+
+		return InOutInputs.OverrideOutput;
+	}
+	else
+	{
+		/** We don't want to modify scene texture in any way. We just want it to be passed back onto the next stage. */
+		FScreenPassTexture SceneTexture = const_cast<FScreenPassTexture&>(InOutInputs.Textures[(uint32)EPostProcessMaterialInput::SceneColor]);
+		return SceneTexture;
+	}
+}
 {% endhighlight %}
