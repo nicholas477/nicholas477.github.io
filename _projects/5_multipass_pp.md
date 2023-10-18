@@ -32,10 +32,35 @@ Scene view extensions are programmable rendering extensions that let you run ren
 
 So using extensions, you can add in a post processing pass with much more control than the material post processing passes built into the engine. You have full control over creating render targets, what shaders are ran, what parameters are passed to the shaders, what passes are ran, etc. You can basically do anything. 
 
-But the drawback is that it isn't as simple as the material post processing passes. You have to write rendering code and interface it with game code, which can be a bit daunting if you're unfamiliar with writing multithreaded code in Unreal. And also since the view extensions are very general purpose, they require a lot of boilerplate code to set up the render targets and insert a post processing pass. There's also some oddities with the renderer that you have to keep in mind, such as regional rendering and how render targets are presented. I don't think these issues are too interesting, so I went over them in the `Issues` section at the bottom of the article. Instead I will go over how I implemented the post process pass.
+But the drawback is that it isn't as simple as the material post processing passes. You have to write rendering code and interface it with game code, which can be a bit daunting if you're unfamiliar with writing multithreaded code in Unreal. And also since the view extensions are very general purpose, they require a lot of boilerplate code to set up the render targets and insert a post processing pass. There's also some oddities with the renderer that you have to keep in mind, such as regional rendering and how render targets are presented. I don't think these issues are too interesting, so I went over them in the `Issues` section at the bottom of the article. Instead I will go over how to implement the post process pass.
 
-#### Implementing post processing passes
-You can find examples of scene view extensions in the engine, but none of them seem to 
+## Implementing post processing passes
+
+#### Creating the scene view extension
+Creating a scene view extension and getting the engine to run it is pretty straightforward. You subclass `FSceneViewExtensionBase` or `FWorldSceneViewExtension`, implement the pure virtual methods, and call `FSceneViewExtensions::NewExtension()` with your new type.
+
+A good example of how to do this is [FMediaCaptureSceneViewExtension](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Plugins/Media/MediaIOFramework/Source/MediaIOCore/Private/MediaCaptureSceneViewExtension.h#L23). You will want to focus on `SubscribeToPostProcessingPass` and `PostProcessCallback_RenderThread`. In your scene view extension, you will override `SubscribeToPostProcessingPass` and pass a delegate to the `FAfterPassCallbackDelegateArray& InOutPassCallbacks` to add in your post process pass. That's basically all you have to do in your extension class. In your module startup code (or wherever you want to add the extension) call `FSceneViewExtensions::NewExtension<FYourExtensionType>()` and hold a reference to your new view extension, and you're done. My code for creating the new extension in my module looks like this:
+
+{% highlight c++ linenos %}
+void FMultipassPPModule::StartupModule()
+{
+	FString PluginShaderDir = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("MultipassPP"))->GetBaseDir(), TEXT("Shaders"));
+	AddShaderSourceDirectoryMapping(TEXT("/MultipassPP"), PluginShaderDir);
+
+	// Wait for engine init, and create the new extension
+	FCoreDelegates::OnPostEngineInit.AddLambda([this]()
+	{	
+		InterlaceSceneExtension = FSceneViewExtensions::NewExtension<FInterlacePPSceneExtension>();
+		MotionBlurSceneExtension = FSceneViewExtensions::NewExtension<FAccumulationMotionBlurSceneExtension>();
+	});
+}
+{% endhighlight %}
+
+One thing you will want to make sure you do is call `FSceneViewExtensions::NewExtension` only after the engine is initialized. This is generally not an issue since most code modules are loaded after the engine by default, but I had to load my module before the engine to be able to add the shader source mapping. Because my module is loaded before the engine I just bound a lambda to engine init and created my extension there.
+
+If you just wanted to run a post processing pass shader then you would just add it in your function that you bound in `SubscribeToPostProcessingPass`. You can look at the [OpenColorIODisplayExtension](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Plugins/Compositing/OpenColorIO/Source/OpenColorIO/Private/OpenColorIODisplayExtension.cpp#L73C12-L73C12) to see how it is done.
+
+#### Managing a render target for temporal effects
 
 ## Issues
 
