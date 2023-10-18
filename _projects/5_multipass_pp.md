@@ -13,7 +13,7 @@ I wanted to make the security cameras in my game to look like old CCD cameras. I
 
 <iframe width="100%" height="480" src="https://www.youtube.com/embed/pAb1qpXoXck" title="Newvicon tube video camera light streaking effect" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
-I decided that I would do the deinterlacing effect by just writing half the horizontal lines each frame, and I would do the light streaking by combining accumulation motion blur with a brightness mask.
+The low res effect is super easy, I just got that done using Unreal's built in post processing materials. For the deinterlacing effect, I decided that I would it by just writing half the horizontal lines each frame. and I would do the light streaking by combining accumulation motion blur with a brightness mask.
 
 Once I decided how I was going to do the effects, I tried using [Unreal's post processing materials](https://docs.unrealengine.com/5.3/en-US/post-process-materials-in-unreal-engine/) to implement them, but they are pretty limited. You can't read the last frame or write to arbitrary render targets with the effects, so doing any sort of accumulative effects (like motion blur) are impossible. The rendering side of Unreal is generally pretty locked down and normally something like this wouldn't be possible without modifying the engine, but fortunately Unreal has a way to extend the renderer without modifying the engine. These extensions are called [Scene View Extensions](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Source/Runtime/Engine/Public/SceneViewExtension.h#L99C9-L99C9).
 
@@ -32,12 +32,13 @@ Scene view extensions are programmable rendering extensions that let you run ren
 
 So using extensions, you can add in a post processing pass with much more control than the material post processing passes built into the engine. You have full control over creating render targets, what shaders are ran, what parameters are passed to the shaders, what passes are ran, etc. You can basically do anything. 
 
-But the drawback is that it isn't as simple as the material post processing passes. You have to write rendering code and interface it with game code, which can be a bit daunting if you're unfamiliar with writing multithreaded code in Unreal. And also since the view extensions are very general purpose, they require a lot of boilerplate code to set up the render targets and insert a post processing pass. There's also some oddities with the renderer that you have to keep in mind, such as regional rendering and how render targets are presented. I don't think these issues are too interesting, so I went over them in the `Issues` section at the bottom of the article. Instead I will go over how to implement the post process pass.
+But the drawback is that it isn't as simple as the material post processing passes. You have to write rendering code and interface it with game code, which can be a bit daunting if you're unfamiliar with writing multithreaded code in Unreal. And also since the view extensions are very general purpose, they require a lot of boilerplate code to set up the render targets and insert a post processing pass. There's also some oddities with the renderer that you have to keep in mind, such as regional rendering and how render targets are presented. I don't think these issues are too interesting, so I went over them in the `Issues` section at the bottom of the article. Instead I will go over how I implemented the post process passes.
 
 ## Implementing post processing passes
+I wrote a [plugin that helps you implement your own post processing passes with scene view extensions](https://github.com/nicholas477/MultipassPP), so the rest of this section will just be a high level overview of how to implement your own scene view extension. If you want to see specifics you can peruse the code in the plugin.
 
 #### Creating the scene view extension
-Creating a scene view extension and getting the engine to run it is pretty straightforward. You subclass `FSceneViewExtensionBase` or `FWorldSceneViewExtension`, implement the pure virtual methods, and call `FSceneViewExtensions::NewExtension()` with your new type.
+Creating a scene view extension and getting the engine to run it is pretty straightforward. You subclass `FSceneViewExtensionBase` or `FWorldSceneViewExtension`, implement the pure virtual methods, and call `FSceneViewExtensions::NewExtension()` with your extension.
 
 A good example of how to do this is [FMediaCaptureSceneViewExtension](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Plugins/Media/MediaIOFramework/Source/MediaIOCore/Private/MediaCaptureSceneViewExtension.h#L23). You will want to focus on `SubscribeToPostProcessingPass` and `PostProcessCallback_RenderThread`. In your scene view extension, you will override `SubscribeToPostProcessingPass` and pass a delegate to the `FAfterPassCallbackDelegateArray& InOutPassCallbacks` to add in your post process pass. That's basically all you have to do in your extension class. In your module startup code (or wherever you want to add the extension) call `FSceneViewExtensions::NewExtension<FYourExtensionType>()` and hold a reference to your new view extension, and you're done. My code for creating the new extension in my module looks like this:
 
@@ -61,10 +62,34 @@ One thing you will want to make sure you do is call `FSceneViewExtensions::NewEx
 If you just wanted to run a post processing pass shader then you would just add it in your function that you bound in `SubscribeToPostProcessingPass`. You can look at the [OpenColorIODisplayExtension](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Plugins/Compositing/OpenColorIO/Source/OpenColorIO/Private/OpenColorIODisplayExtension.cpp#L73C12-L73C12) to see how it is done.
 
 #### Managing a render target for temporal effects
+At first, I tried using a single render target for the temporal effects, but I ran into issues with multiple editor views clobbering each other's render targets. And I ran into issues when the camera would switch from one view to another not clearing the last frame's render target. To fix this, I looked through the engine code and tried to find any scene view extensions that had render targets or handled multiple views, and I couldn't find any.
+
+After some experimentation with associating RTs with scene view families and cameras, I found that associating RTs with scene view indices was the best way to fix my issues. In my scene view extension, I set up a map of view indices to view data:
+
+{% highlight c++ linenos %}
+struct MULTIPASSPP_API FMultipassPPViewData : public IMultipassPPViewData
+{
+	virtual TRefCountPtr<IPooledRenderTarget> GetRT() override { return RT; };
+	virtual void SetupRT(const FIntPoint& Resolution) override;
+
+	TRefCountPtr<IPooledRenderTarget> RT;
+	FString RTDebugName = "Multipass PP View Data RT";
+	EPixelFormat RTPixelFormat = EPixelFormat::PF_B8G8R8A8; // Equivalent to ETextureRenderTargetFormat::RTF_RGBA8_SRGB
+};
+
+class MULTIPASSPP_API FMultipassPPSceneExtension : public FSceneViewExtensionBase
+{
+	// Map of ViewState index to ViewData
+	// Each view should have a ViewData associated to it
+	TMap<uint32, TSharedPtr<IMultipassPPViewData>> ViewDataMap;
+};
+{% endhighlight %}
+
+I constructed the view data in the `SetupView` function in my scene extension, and during my post processing pass I looked up the view data from the scene view and used that.
 
 ## Issues
 
-#### Regional Rendering Explained
+#### Regional Rendering
 
 When you make the editor viewport bigger, the render targets used for rendering are all resized to a bigger size, but the same is not true when you make the viewport smaller. The editor doesn't resize the render targets smaller, but instead just renders to a smaller region of the render targets.
 
