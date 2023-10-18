@@ -90,6 +90,12 @@ I constructed the view data in the [SetupView](https://github.com/nicholas477/Mu
 #### Bringing it all together
 There's a few issues I had with creating my scene view extension that I talk about in the bottom of this article, but other than that the post processing pass is basically done. The next steps are to just write the shaders, bind their resources, and run them in the post processing pass. You can see the code for that [here](https://github.com/nicholas477/MultipassPP/blob/e6ebac603f3c4ca5f41a3bf3e5a6b480263b2fcd/Source/MultipassPP/Public/MultipassPPSceneExtension.h#L107C28-L107C28).
 
+You can see the finished effects in this video:
+
+<iframe width="100%" height="480" src="https://www.youtube.com/embed/rTjeTTfy6VI" title="Security camera post processing" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+
+The streaking still needs some tweaking and maybe some subsampling, but I'm pretty happy with how it turned out. I included the two post processing effects in my plugin, and you can download it from the downloads section.
+
 ## Issues
 
 #### Regional Rendering
@@ -183,3 +189,7 @@ FScreenPassTexture ReturnUntouchedSceneColorForPostProcessing(FRDGBuilder& Graph
 	}
 }
 {% endhighlight %}
+
+# Download Links
+
+- [Plugin Link](https://github.com/nicholas477/MultipassPP)
