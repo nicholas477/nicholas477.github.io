@@ -85,7 +85,10 @@ class MULTIPASSPP_API FMultipassPPSceneExtension : public FSceneViewExtensionBas
 };
 {% endhighlight %}
 
-I constructed the view data in the `SetupView` function in my scene extension, and during my post processing pass I looked up the view data from the scene view and used that.
+I constructed the view data in the [SetupView](https://github.com/nicholas477/MultipassPP/blob/e6ebac603f3c4ca5f41a3bf3e5a6b480263b2fcd/Source/MultipassPP/Private/MultipassPPSceneExtension.cpp#L21C17-L21C17) function in my scene extension, and during my post processing pass I [looked up the view data from the scene view](https://github.com/nicholas477/MultipassPP/blob/e6ebac603f3c4ca5f41a3bf3e5a6b480263b2fcd/Source/MultipassPP/Private/MultipassPPSceneExtension.cpp#L44C46-L44C57) and used that.
+
+#### Bringing it all together
+There's a few issues I had with creating my scene view extension that I talk about in the bottom of this article, but other than that the post processing pass is basically done. The next steps are to just write the shaders, bind their resources, and run them in the post processing pass. You can see the code for that [here](https://github.com/nicholas477/MultipassPP/blob/e6ebac603f3c4ca5f41a3bf3e5a6b480263b2fcd/Source/MultipassPP/Public/MultipassPPSceneExtension.h#L107C28-L107C28).
 
 ## Issues
 
