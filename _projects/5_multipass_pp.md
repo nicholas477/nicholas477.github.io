@@ -2,7 +2,7 @@
 layout: page
 title: Multipass Post Processing Effects Using Scene View Extensions
 description:
-img:
+img: assets/img/multipass-pp/article-cover.png
 importance: 0
 category: 2023
 ---
