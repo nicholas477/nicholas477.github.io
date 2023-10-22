@@ -2,6 +2,8 @@
 layout: post
 title: Multipass Post Processing Effects Using Scene View Extensions
 date:   2023-10-21 20:40:16
+toc:
+  beginning: true
 ---
 
 # Overview
@@ -10,7 +12,7 @@ I wanted to make the security cameras in my game to look like old CCD cameras. I
 
 <iframe width="100%" height="480" src="https://www.youtube.com/embed/pAb1qpXoXck" title="Newvicon tube video camera light streaking effect" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
-The low res effect is super easy, I just got that done using Unreal's built in post processing materials. For the deinterlacing effect, I decided that I would it by just writing half the horizontal lines each frame. And I decided I would do the light streaking by combining accumulation motion blur with a brightness mask.
+The low res effect is super easy, I just got that done using Unreal's built in post processing materials. For the deinterlacing effect, I decided that I would do it by just writing half the horizontal lines each frame. And I decided I would do the light streaking by combining accumulation motion blur with a brightness mask.
 
 Once I decided how I was going to do the deinterlacing and streaking effects, I tried using [Unreal's post processing materials](https://docs.unrealengine.com/5.3/en-US/post-process-materials-in-unreal-engine/) to implement them, but they are pretty limited. You can't read the last frame or write to arbitrary render targets with the effects, so doing any sort of accumulative effects (like motion blur) are impossible. The rendering side of Unreal is generally pretty locked down and normally something like this wouldn't be possible without modifying the engine, but fortunately Unreal has a way to extend the renderer without modifying the engine. These extensions are called [Scene View Extensions](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Source/Runtime/Engine/Public/SceneViewExtension.h#L99C9-L99C9).
 
@@ -34,7 +36,7 @@ But the drawback is that it isn't as simple as the material post processing pass
 ## Implementing post processing passes
 I wrote a [plugin that helps you implement your own post processing passes with scene view extensions](https://github.com/nicholas477/MultipassPP), so the rest of this section will just be a high level overview of how to implement your own scene view extension. If you want to see specifics you can peruse the code in the plugin.
 
-I also recommend using the 
+If you want to write your own post processing pass then I recommend just using the plugin instead of writing the extension entirely from scratch. The interlacing effect and motion blur effect are included in the plugin for you to edit however you like.
 
 #### Creating the scene view extension
 Creating a scene view extension and getting the engine to run it is pretty straightforward. You subclass `FSceneViewExtensionBase` or `FWorldSceneViewExtension`, implement the pure virtual methods, and call `FSceneViewExtensions::NewExtension()` with your extension.
@@ -63,9 +65,9 @@ Note: One thing you will want to make sure you do is call `FSceneViewExtensions:
 And you're done! The view extension should now be ran by the renderer after it is created. If you didn't want to do temporal effects with your scene view extension, you can stop here. Otherwise, continue on to the `Managing a render target for temporal effects` section.
 
 #### Managing a render target for temporal effects
-If you want to do a persistent post processing effect with your scene view extension, your extension will require a bit of extra work. You will have to store an extra render target in your scene view extension to handle the persistent effects. Trying to figure out how to properly do this proved to be a big issue. At first, I tried using a single render target for the temporal effects, but I ran into issues with multiple editor views clobbering each other's render targets. And I ran into issues when the camera would switch from one view to another not clearing the last frame's render target. To fix these issues, I looked through the engine code and tried to find any scene view extensions that had render targets or handled multiple views, and I couldn't find any.
+If you want to do a persistent post processing effect with your scene view extension, your extension will require a bit of extra work. You will have to store an extra render target in your scene view extension to handle the persistent effects. Trying to figure out how to properly do this proved to be a big issue. At first, I tried using a single render target for the temporal effects, but I ran into issues with multiple editor views clobbering each other's render targets. And I also ran into issues when the camera would switch from one view to another. It would not clear the last frame's render target so the blur was accumulated between cameras when it shouldn't have. To fix these issues, I looked through the engine code and tried to find any scene view extensions that had render targets or handled multiple views, but I couldn't find any.
 
-After some experimentation with associating RTs with scene view families and cameras, I found that associating RTs with scene view indices was the best way to fix my issues. In my scene view extension, I set up a map of view indices to view data:
+So after some experimentation with associating RTs with scene view families and cameras, I found that associating RTs with scene view indices was the best way to fix my issues. In my scene view extension, I set up a map of view indices to view data:
 
 {% highlight c++ linenos %}
 struct MULTIPASSPP_API FMultipassPPViewData : public IMultipassPPViewData
@@ -89,7 +91,7 @@ class MULTIPASSPP_API FMultipassPPSceneExtension : public FSceneViewExtensionBas
 I constructed the view data in the [SetupView](https://github.com/nicholas477/MultipassPP/blob/e6ebac603f3c4ca5f41a3bf3e5a6b480263b2fcd/Source/MultipassPP/Private/MultipassPPSceneExtension.cpp#L21C17-L21C17) function in my scene extension, and during my post processing pass I [looked up the view data from the scene view](https://github.com/nicholas477/MultipassPP/blob/e6ebac603f3c4ca5f41a3bf3e5a6b480263b2fcd/Source/MultipassPP/Private/MultipassPPSceneExtension.cpp#L44C46-L44C57) and used that.
 
 #### Bringing it all together
-There's a few issues I had with creating my scene view extension that I talk about in the bottom of this article, but other than that the post processing pass is basically done. The next steps are to just write the shaders, bind their resources, and run them in the post processing pass. You can see the code for that [here](https://github.com/nicholas477/MultipassPP/blob/e6ebac603f3c4ca5f41a3bf3e5a6b480263b2fcd/Source/MultipassPP/Public/MultipassPPSceneExtension.h#L107C28-L107C28).
+There's a few more issues I had with creating my scene view extension that I talk about in the bottom of this article, but other than that the post processing pass is basically done. The next steps are to just write the shaders, bind their resources, and run them in the post processing pass. You can see the code for that [here](https://github.com/nicholas477/MultipassPP/blob/e6ebac603f3c4ca5f41a3bf3e5a6b480263b2fcd/Source/MultipassPP/Public/MultipassPPSceneExtension.h#L107C28-L107C28).
 
 You can see the finished effects in this video:
 
