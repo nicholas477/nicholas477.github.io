@@ -18,4 +18,4 @@ selected_papers: false # includes a list of papers marked as "selected={true}"
 social: true  # includes social icons at the bottom of the page
 ---
 
-Thanks for looking at my site. I've got a billion unreal plugins on here, you can find them under the projects page. Look at my games too if you want.
+Thanks for looking at my site. I've got a billion unreal plugins on here, I write about them on my blog and you can find them under the repositories page. Look at my games too if you want.
