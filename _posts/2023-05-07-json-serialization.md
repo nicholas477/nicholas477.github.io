@@ -1,5 +1,5 @@
 ---
-layout: distill
+layout: post
 title: Unreal UObject Json Serialzation
 description: Man this should be an engine feature
 importance: 0

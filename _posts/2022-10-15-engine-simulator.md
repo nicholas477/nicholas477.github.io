@@ -1,5 +1,5 @@
 ---
-layout: distill
+layout: post
 title: AngeTheGreat's Engine Simulator in Unreal Engine
 description: the world's greatest engine simulator meets a mediocre physics engine!
 date:   2022-10-15 16:40:16
