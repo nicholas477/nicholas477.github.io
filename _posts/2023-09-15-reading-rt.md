@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: post
 title: Asynchronously Reading Render Targets Using Fences
 date:   2023-09-15 16:40:16
 ---

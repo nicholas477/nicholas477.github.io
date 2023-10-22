@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: post
 title: Multipass Post Processing Effects Using Scene View Extensions
 date:   2023-10-21 20:40:16
 ---
