@@ -6,14 +6,14 @@ date:   2023-09-15 16:40:16
 
 [Unreal has a built-in function for reading pixels from a render target](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Source/Runtime/Engine/Private/UnrealClient.cpp#L61) but its awful. This single call blocks the game thread and can take milliseconds to complete since it flushes the RHI command queue.
 
-{% details What is a RHI command queue %}
+<div class="fake-img l-body">
+<p>
+What is a RHI command queue?
+
 The RHI command queue is a list of commands that are sent to the GPU. You can add to this list by using `ENQUEUE_RENDER_COMMAND` and adding commands via the passed-in `FRHICommandListImmediate&`.
 
 Flushing the command queue means sending all of those commands to the GPU and waiting for them to get done. This generally takes so long (multiple milliseconds) that it should never be done.
-{% enddetails %}
-
-<div class="fake-img l-body-outset">
-  <p></p>
+</p>
 </div>
 
 <div class="row justify-content-sm-center">
