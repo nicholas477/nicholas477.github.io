@@ -1,10 +1,7 @@
 ---
 layout: page
 title: Asynchronously Reading Render Targets Using Fences
-description:
-img:
-importance: 0
-category: 2023
+date:   2023-09-15 16:40:16
 ---
 
 [Unreal has a built-in function for reading pixels from a render target](https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Source/Runtime/Engine/Private/UnrealClient.cpp#L61) but its awful. This single call blocks the game thread and can take milliseconds to complete since it flushes the RHI command queue.

@@ -2,9 +2,8 @@
 layout: page
 title: Unreal UObject Json Serialzation
 description: Man this should be an engine feature
-img: assets/img/json-serialization.png
 importance: 0
-category: 2023
+date:   2023-05-07 16:40:16
 ---
 
 I was working on an analytics collector in Unreal and I wasn't very happy with the system they have in place now, which uses function calls to record events. Each event is either a key/value pair or a key/dict pair, and you have to log each pair manually using function calls. A few lines of json

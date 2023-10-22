@@ -1,10 +1,9 @@
 ---
-layout: page
+layout: post
 title: AngeTheGreat's Engine Simulator in Unreal Engine
 description: the world's greatest engine simulator meets a mediocre physics engine!
-img: assets/img/engine-simulator.jpg
 importance: 1
-category: 2022
+date:   2022-10-15 16:40:16
 ---
 
 ##### - Download links are at the bottom of the article -
