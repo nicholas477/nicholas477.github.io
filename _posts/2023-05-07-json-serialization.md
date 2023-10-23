@@ -1,6 +1,6 @@
 ---
 layout: post
-title: Unreal UObject Json Serialzation
+title: Unreal UObject Json Serialization
 description: Man this should be an engine feature
 importance: 0
 date:   2023-05-07 16:40:16
