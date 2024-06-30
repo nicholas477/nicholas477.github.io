@@ -1,0 +1,869 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en"><generator uri="https://jekyllrb.com/" version="4.3.3">Jekyll</generator><link href="https://nicholas477.github.io//feed.xml" rel="self" type="application/atom+xml"/><link href="https://nicholas477.github.io//" rel="alternate" type="text/html" hreflang="en"/><updated>2024-06-30T18:48:28+00:00</updated><id>https://nicholas477.github.io//feed.xml</id><subtitle>Unreal engine rantings and ravings </subtitle><entry><title type="html">Multipass Post Processing Effects Using Scene View Extensions</title><link href="https://nicholas477.github.io//blog/2023/multipass_pp/" rel="alternate" type="text/html" title="Multipass Post Processing Effects Using Scene View Extensions"/><published>2023-10-21T20:40:16+00:00</published><updated>2023-10-21T20:40:16+00:00</updated><id>https://nicholas477.github.io//blog/2023/multipass_pp</id><content type="html" xml:base="https://nicholas477.github.io//blog/2023/multipass_pp/"><![CDATA[<h1 id="overview">Overview</h1> <p>I wanted to make the security cameras in my game to look like old CCD cameras. In particular, I wanted the cameras to look deinterlaced, low res, and I wanted them to have a light streaking effect. You can see what i’m talking about in the video below.</p> <iframe width="100%" height="480" src="https://www.youtube.com/embed/pAb1qpXoXck" title="Newvicon tube video camera light streaking effect" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe> <p>The low res effect is super easy, I just got that done using Unreal’s built in post processing materials. For the deinterlacing effect, I decided that I would do it by just writing half the horizontal lines each frame. And I decided I would do the light streaking by combining accumulation motion blur with a brightness mask.</p> <p>Once I decided how I was going to do the deinterlacing and streaking effects, I tried using <a href="https://docs.unrealengine.com/5.3/en-US/post-process-materials-in-unreal-engine/">Unreal’s post processing materials</a> to implement them, but they are pretty limited. You can’t read the last frame or write to arbitrary render targets with the effects, so doing any sort of accumulative effects (like motion blur) are impossible. The rendering side of Unreal is generally pretty locked down and normally something like this wouldn’t be possible without modifying the engine, but fortunately Unreal has a way to extend the renderer without modifying the engine. These extensions are called <a href="https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Source/Runtime/Engine/Public/SceneViewExtension.h#L99C9-L99C9">Scene View Extensions</a>.</p> <h2 id="scene-view-extensions">Scene View Extensions</h2> <p>Scene view extensions are programmable rendering extensions that let you run rendering code at different parts of the rendering pipeline. They also let you add in a pass to the post processing stack at different parts of the post processing pipeline. I’ve actually used them before to implement a <a href="https://youtu.be/gCus1za5iho">volumetric fog effect</a> and a custom mesh render pass.</p> <div class="row"> <div class="col-sm mt-3 mt-md-0"> <figure> <picture> <source class="responsive-img-srcset" media="(max-width: 480px)" srcset="/assets/img/multipass-pp/custom_render_pass-480.webp"/> <source class="responsive-img-srcset" media="(max-width: 800px)" srcset="/assets/img/multipass-pp/custom_render_pass-800.webp"/> <source class="responsive-img-srcset" media="(max-width: 1400px)" srcset="/assets/img/multipass-pp/custom_render_pass-1400.webp"/> <img src="/assets/img/multipass-pp/custom_render_pass.png" class="img-fluid rounded z-depth-1" width="auto" height="auto" title="Custom Render Pass using Scene View Extension" onerror="this.onerror=null; $('.responsive-img-srcset').remove();"/> </picture> </figure> </div> </div> <div class="caption"> Using a scene view extension, I was able to add a mesh render pass that would draw after SSR and motion blur, but before bloom. </div> <p>So using extensions, you can add in a post processing pass with much more control than the material post processing passes built into the engine. You have full control over creating render targets, what shaders are ran, what parameters are passed to the shaders, what passes are ran, etc. You can basically do anything.</p> <p>But the drawback is that it isn’t as simple as the material post processing passes. You have to write rendering code and interface it with game code, which can be a bit daunting if you’re unfamiliar with writing multithreaded code in Unreal. Also since the view extensions are very general purpose, they require a lot of boilerplate code to set up the render targets and insert a post processing pass. Lastly, there’s some oddities with the renderer that you have to work around, such as in-editor regional rendering and an issue with how render targets are presented. I don’t think these issues are too interesting, so I went over them in the <code class="language-plaintext highlighter-rouge">Issues</code> section at the bottom of the article. Instead I will go over how I implemented the post process passes.</p> <h2 id="implementing-post-processing-passes">Implementing post processing passes</h2> <p>I wrote a <a href="https://github.com/nicholas477/MultipassPP">plugin that helps you implement your own post processing passes with scene view extensions</a>, so the rest of this section will just be a high level overview of how to implement your own scene view extension from scratch. If you want to see working examples then peruse the plugin.</p> <p>If you want to write your own post processing pass then I recommend just using the plugin instead of writing the extension entirely from scratch. The interlacing effect and motion blur effect are included in the plugin for you to edit however you like.</p> <h4 id="creating-the-scene-view-extension">Creating the scene view extension</h4> <p>Creating a scene view extension and getting the engine to run it is pretty straightforward. You subclass <code class="language-plaintext highlighter-rouge">FSceneViewExtensionBase</code> or <code class="language-plaintext highlighter-rouge">FWorldSceneViewExtension</code>, implement the pure virtual methods, and call <code class="language-plaintext highlighter-rouge">FSceneViewExtensions::NewExtension()</code> with your extension.</p> <p>A good example of how to do this is <a href="https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Plugins/Media/MediaIOFramework/Source/MediaIOCore/Private/MediaCaptureSceneViewExtension.h#L23">FMediaCaptureSceneViewExtension</a>. You will want to focus on <code class="language-plaintext highlighter-rouge">SubscribeToPostProcessingPass</code> and <code class="language-plaintext highlighter-rouge">PostProcessCallback_RenderThread</code>. In your scene view extension, you override <code class="language-plaintext highlighter-rouge">SubscribeToPostProcessingPass</code> and pass a delegate to the <code class="language-plaintext highlighter-rouge">FAfterPassCallbackDelegateArray&amp; InOutPassCallbacks</code> to add in your post process pass. That’s basically all you have to do in your extension. Then in the function delegate you passed, you just do your rendering pass code there and use the <code class="language-plaintext highlighter-rouge">FPostProcessMaterialInputs</code> for the RT inputs/output. You can get the scene color from the <code class="language-plaintext highlighter-rouge">FPostProcessMaterialInputs</code> and you either use the <code class="language-plaintext highlighter-rouge">OverrideOutput</code> RT or your own RT for the output, and you return the outputted RT in your function. You can see this being done in the <a href="https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Plugins/Compositing/OpenColorIO/Source/OpenColorIO/Private/OpenColorIODisplayExtension.cpp#L73C12-L73C12">OpenColorIODisplayExtension</a> code here. If you want to use a custom shader for the extension, you can see how to do that <a href="https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Plugins/Compositing/OpenColorIO/Source/OpenColorIO/Private/OpenColorIORendering.cpp#L92C3-L92C20">here</a>, in the OpenColorIO code.</p> <p>Now to actually get your extension to run, you will have to create it. In your module startup code (or wherever you want to add the extension) call <code class="language-plaintext highlighter-rouge">FSceneViewExtensions::NewExtension&lt;FYourExtensionType&gt;()</code> and hold a reference to your new view extension. My code for creating the new extension in my module looks like this:</p> <figure class="highlight"><pre><code class="language-c--" data-lang="c++"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+</pre></td><td class="code"><pre><span class="kt">void</span> <span class="n">FMultipassPPModule</span><span class="o">::</span><span class="n">StartupModule</span><span class="p">()</span>
+<span class="p">{</span>
+	<span class="n">FString</span> <span class="n">PluginShaderDir</span> <span class="o">=</span> <span class="n">FPaths</span><span class="o">::</span><span class="n">Combine</span><span class="p">(</span><span class="n">IPluginManager</span><span class="o">::</span><span class="n">Get</span><span class="p">().</span><span class="n">FindPlugin</span><span class="p">(</span><span class="n">TEXT</span><span class="p">(</span><span class="s">"MultipassPP"</span><span class="p">))</span><span class="o">-&gt;</span><span class="n">GetBaseDir</span><span class="p">(),</span> <span class="n">TEXT</span><span class="p">(</span><span class="s">"Shaders"</span><span class="p">));</span>
+	<span class="n">AddShaderSourceDirectoryMapping</span><span class="p">(</span><span class="n">TEXT</span><span class="p">(</span><span class="s">"/MultipassPP"</span><span class="p">),</span> <span class="n">PluginShaderDir</span><span class="p">);</span>
+
+	<span class="c1">// Wait for engine init, and create the new extension</span>
+	<span class="n">FCoreDelegates</span><span class="o">::</span><span class="n">OnPostEngineInit</span><span class="p">.</span><span class="n">AddLambda</span><span class="p">([</span><span class="k">this</span><span class="p">]()</span>
+	<span class="p">{</span>	
+		<span class="n">InterlaceSceneExtension</span> <span class="o">=</span> <span class="n">FSceneViewExtensions</span><span class="o">::</span><span class="n">NewExtension</span><span class="o">&lt;</span><span class="n">FInterlacePPSceneExtension</span><span class="o">&gt;</span><span class="p">();</span>
+		<span class="n">MotionBlurSceneExtension</span> <span class="o">=</span> <span class="n">FSceneViewExtensions</span><span class="o">::</span><span class="n">NewExtension</span><span class="o">&lt;</span><span class="n">FAccumulationMotionBlurSceneExtension</span><span class="o">&gt;</span><span class="p">();</span>
+	<span class="p">});</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></pre></figure> <p>Note: One thing you will want to make sure you do is call <code class="language-plaintext highlighter-rouge">FSceneViewExtensions::NewExtension</code> only after the engine is initialized. This is generally not an issue since most code modules are loaded after the engine by default, but I had to load my module before the engine to be able to add the shader source mapping. Because my module is loaded before the engine I just bound a lambda to engine init and created my extension there.</p> <p>And you’re done! The view extension should now be ran by the renderer after it is created. If you didn’t want to do temporal effects with your scene view extension, you can stop here. Otherwise, continue on to the <code class="language-plaintext highlighter-rouge">Managing a render target for temporal effects</code> section.</p> <h4 id="managing-a-render-target-for-temporal-effects">Managing a render target for temporal effects</h4> <p>If you want to do a persistent post processing effect with your scene view extension, your extension will require a bit of extra work. You will have to store an extra render target in your scene view extension to handle the persistent effects. Trying to figure out how to properly do this proved to be a big issue. At first, I tried using a single render target for the temporal effects, but I ran into issues with multiple editor views clobbering each other’s render targets. And I also ran into issues when the camera would switch from one view to another. It would not clear the last frame’s render target so the blur was accumulated between cameras when it shouldn’t have. To fix these issues, I looked through the engine code and tried to find any scene view extensions that had render targets or handled multiple views, but I couldn’t find any.</p> <p>So after some experimentation with associating RTs with scene view families and cameras, I found that associating RTs with scene view indices was the best way to fix my issues. In my scene view extension, I set up a map of view indices to view data:</p> <figure class="highlight"><pre><code class="language-c--" data-lang="c++"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+</pre></td><td class="code"><pre><span class="k">struct</span> <span class="nc">MULTIPASSPP_API</span> <span class="n">FMultipassPPViewData</span> <span class="o">:</span> <span class="k">public</span> <span class="n">IMultipassPPViewData</span>
+<span class="p">{</span>
+	<span class="k">virtual</span> <span class="n">TRefCountPtr</span><span class="o">&lt;</span><span class="n">IPooledRenderTarget</span><span class="o">&gt;</span> <span class="n">GetRT</span><span class="p">()</span> <span class="k">override</span> <span class="p">{</span> <span class="k">return</span> <span class="n">RT</span><span class="p">;</span> <span class="p">};</span>
+	<span class="k">virtual</span> <span class="kt">void</span> <span class="n">SetupRT</span><span class="p">(</span><span class="k">const</span> <span class="n">FIntPoint</span><span class="o">&amp;</span> <span class="n">Resolution</span><span class="p">)</span> <span class="k">override</span><span class="p">;</span>
+
+	<span class="n">TRefCountPtr</span><span class="o">&lt;</span><span class="n">IPooledRenderTarget</span><span class="o">&gt;</span> <span class="n">RT</span><span class="p">;</span>
+	<span class="n">FString</span> <span class="n">RTDebugName</span> <span class="o">=</span> <span class="s">"Multipass PP View Data RT"</span><span class="p">;</span>
+	<span class="n">EPixelFormat</span> <span class="n">RTPixelFormat</span> <span class="o">=</span> <span class="n">EPixelFormat</span><span class="o">::</span><span class="n">PF_B8G8R8A8</span><span class="p">;</span> <span class="c1">// Equivalent to ETextureRenderTargetFormat::RTF_RGBA8_SRGB</span>
+<span class="p">};</span>
+
+<span class="k">class</span> <span class="nc">MULTIPASSPP_API</span> <span class="n">FMultipassPPSceneExtension</span> <span class="o">:</span> <span class="k">public</span> <span class="n">FSceneViewExtensionBase</span>
+<span class="p">{</span>
+	<span class="c1">// Map of ViewState index to ViewData</span>
+	<span class="c1">// Each view should have a ViewData associated to it</span>
+	<span class="n">TMap</span><span class="o">&lt;</span><span class="n">uint32</span><span class="p">,</span> <span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">IMultipassPPViewData</span><span class="o">&gt;&gt;</span> <span class="n">ViewDataMap</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></td></tr></tbody></table></code></pre></figure> <p>I constructed the view data in the <a href="https://github.com/nicholas477/MultipassPP/blob/e6ebac603f3c4ca5f41a3bf3e5a6b480263b2fcd/Source/MultipassPP/Private/MultipassPPSceneExtension.cpp#L21C17-L21C17">SetupView</a> function in my scene extension, and during my post processing pass I <a href="https://github.com/nicholas477/MultipassPP/blob/e6ebac603f3c4ca5f41a3bf3e5a6b480263b2fcd/Source/MultipassPP/Private/MultipassPPSceneExtension.cpp#L44C46-L44C57">looked up the view data from the scene view</a> and used that.</p> <h4 id="bringing-it-all-together">Bringing it all together</h4> <p>There’s a few more issues I had with creating my scene view extension that I talk about in the bottom of this article, but other than that the post processing pass is basically done. The next steps are to just write the shaders, bind their resources, and run them in the post processing pass. You can see the code for that <a href="https://github.com/nicholas477/MultipassPP/blob/e6ebac603f3c4ca5f41a3bf3e5a6b480263b2fcd/Source/MultipassPP/Public/MultipassPPSceneExtension.h#L107C28-L107C28">here</a>.</p> <p>You can see the finished effects in this video:</p> <iframe width="100%" height="480" src="https://www.youtube.com/embed/rTjeTTfy6VI" title="Security camera post processing" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe> <p>The streaking still needs some tweaking and maybe some subsampling, but I’m pretty happy with how it turned out. I included the two post processing effects in my plugin, and you can download it from the downloads section.</p> <h2 id="issues">Issues</h2> <h4 id="regional-rendering">Regional Rendering</h4> <p>When you make the editor viewport bigger, the render targets used for rendering are all resized to a bigger size, but the same is not true when you make the viewport smaller. The editor doesn’t resize the render targets smaller, but instead just renders to a smaller region of the render targets.</p> <p>Generally this is something that you never have to deal with if you don’t write rendering code since the engine handles it transparently, but I did have to deal with it in my motion blur extension. It doesn’t seem like you can get the size of the entire render target used in editor in Unreal when you are setting up the render targets in <code class="language-plaintext highlighter-rouge">ISceneViewExtension::SetupView</code>, so the render target mismatch caused my UVs to be messed up. I ended up rescaling the UVs for the RT in my pixel shader.</p> <figure class="highlight"><pre><code class="language-c" data-lang="c"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+</pre></td><td class="code"><pre><span class="n">float2</span> <span class="n">UV</span> <span class="o">=</span> <span class="n">UVAndScreenPos</span><span class="p">.</span><span class="n">xy</span><span class="p">;</span>
+	
+<span class="c1">// The UVs are scaled to the size of the UV rect of the viewport, so we need to unscale</span>
+<span class="c1">// the UVs for reading from the output texture</span>
+<span class="n">float2</span> <span class="n">OutputUVs</span> <span class="o">=</span> <span class="p">(</span><span class="n">float2</span><span class="p">(</span><span class="n">InputTextureSize</span><span class="p">)</span> <span class="o">/</span> <span class="n">float2</span><span class="p">(</span><span class="n">OutputTextureSize</span><span class="p">))</span> <span class="o">*</span> <span class="n">UV</span><span class="p">;</span>
+	
+<span class="k">const</span> <span class="kt">float</span> <span class="n">FrameRate</span> <span class="o">=</span> <span class="mi">1</span><span class="p">.</span><span class="mi">0</span> <span class="o">/</span> <span class="n">DeltaTime</span><span class="p">;</span>
+
+<span class="kt">float</span> <span class="n">Weight</span> <span class="o">=</span> <span class="n">exp</span><span class="p">(</span><span class="n">log</span><span class="p">(</span><span class="n">FadeWeight</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">FrameRate</span> <span class="o">*</span> <span class="n">FadeTime</span><span class="p">));</span>
+<span class="n">Weight</span> <span class="o">=</span> <span class="n">saturate</span><span class="p">(</span><span class="n">Weight</span><span class="p">);</span>
+	
+<span class="k">if</span> <span class="p">(</span><span class="n">LastFrameNumber</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">return</span> <span class="n">float4</span><span class="p">(</span><span class="n">Texture2DSample</span><span class="p">(</span><span class="n">InputTexture</span><span class="p">,</span> <span class="n">InputSampler</span><span class="p">,</span> <span class="n">UV</span><span class="p">).</span><span class="n">rgb</span><span class="p">,</span> <span class="mi">1</span><span class="p">.</span><span class="mi">0</span><span class="p">);</span>
+<span class="p">}</span>
+	
+<span class="n">float3</span> <span class="n">PrevFrame</span> <span class="o">=</span> <span class="n">Texture2DSample</span><span class="p">(</span><span class="n">MotionBlurTexture</span><span class="p">,</span> <span class="n">MotionBlurSampler</span><span class="p">,</span> <span class="n">OutputUVs</span><span class="p">).</span><span class="n">rgb</span><span class="p">;</span>
+<span class="n">float3</span> <span class="n">CurFrame</span> <span class="o">=</span> <span class="n">Texture2DSample</span><span class="p">(</span><span class="n">InputTexture</span><span class="p">,</span> <span class="n">InputSampler</span><span class="p">,</span> <span class="n">UV</span><span class="p">).</span><span class="n">rgb</span><span class="p">;</span>
+	
+<span class="n">float3</span> <span class="n">Output</span> <span class="o">=</span> <span class="n">lerp</span><span class="p">(</span><span class="n">CurFrame</span><span class="p">,</span> <span class="n">PrevFrame</span><span class="p">,</span> <span class="n">Weight</span><span class="p">);</span>
+</pre></td></tr></tbody></table></code></pre></figure> <h4 id="presenting-rts">Presenting RTs</h4> <p>Depending on the post processing settings, I would have to enable my post processing pass but never actually run the post processing shader. When this happened, the screen would be frozen and I had no idea why. I was using a post processing bypass function used by scene view extensions in the engine called <code class="language-plaintext highlighter-rouge">ReturnUntouchedSceneColorForPostProcessing</code>, and it seems like it should have worked.</p> <p>The issue I had with how the output render target is actually presented is that sometimes the engine gives you a render target to write to, and sometimes it doesn’t. The bypass code I found in the engine’s scene view extensions don’t take this into account, and I was scratching my head for a while trying to figure out why it doesn’t work.</p> <p>The engine’s bypass code looks like this:</p> <figure class="highlight"><pre><code class="language-c--" data-lang="c++"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+</pre></td><td class="code"><pre><span class="cm">/** 
+* A helper function that extracts the right scene color texture, untouched, to be used further in post processing. 
+*/</span>
+<span class="n">FScreenPassTexture</span> <span class="nf">ReturnUntouchedSceneColorForPostProcessing</span><span class="p">(</span><span class="k">const</span> <span class="n">FPostProcessMaterialInputs</span><span class="o">&amp;</span> <span class="n">InOutInputs</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">InOutInputs</span><span class="p">.</span><span class="n">OverrideOutput</span><span class="p">.</span><span class="n">IsValid</span><span class="p">())</span>
+	<span class="p">{</span>
+		<span class="k">return</span> <span class="n">InOutInputs</span><span class="p">.</span><span class="n">OverrideOutput</span><span class="p">;</span>
+	<span class="p">}</span>
+	<span class="k">else</span>
+	<span class="p">{</span>
+		<span class="cm">/** We don't want to modify scene texture in any way. We just want it to be passed back onto the next stage. */</span>
+		<span class="n">FScreenPassTexture</span> <span class="n">SceneTexture</span> <span class="o">=</span> <span class="k">const_cast</span><span class="o">&lt;</span><span class="n">FScreenPassTexture</span><span class="o">&amp;&gt;</span><span class="p">(</span><span class="n">InOutInputs</span><span class="p">.</span><span class="n">Textures</span><span class="p">[(</span><span class="n">uint32</span><span class="p">)</span><span class="n">EPostProcessMaterialInput</span><span class="o">::</span><span class="n">SceneColor</span><span class="p">]);</span>
+		<span class="k">return</span> <span class="n">SceneTexture</span><span class="p">;</span>
+	<span class="p">}</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></pre></figure> <p>You can see it just returns either the output override RT or the inputted scene texture if the override output doesn’t exist. The issue with this is that the override output RT doesn’t actually have anything written to it if it does exist, so if you present it then it just looks like the scene rendering froze. Once I figured out that that was the issue, I added a pass that copies the scene color RT to the output override and fixed the issue. You can see this implemented in the code below:</p> <figure class="highlight"><pre><code class="language-c--" data-lang="c++"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+</pre></td><td class="code"><pre><span class="n">FScreenPassTexture</span> <span class="nf">ReturnUntouchedSceneColorForPostProcessing</span><span class="p">(</span><span class="n">FRDGBuilder</span><span class="o">&amp;</span> <span class="n">GraphBuilder</span><span class="p">,</span> <span class="k">const</span> <span class="n">FSceneView</span><span class="o">&amp;</span> <span class="n">View</span><span class="p">,</span> <span class="k">const</span> <span class="n">FViewInfo</span><span class="o">&amp;</span> <span class="n">ViewInfo</span><span class="p">,</span> <span class="k">const</span> <span class="n">FPostProcessMaterialInputs</span><span class="o">&amp;</span> <span class="n">InOutInputs</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="c1">// If OverrideOutput is valid, we need to write to it, even if we're bypassing pp rendering</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">InOutInputs</span><span class="p">.</span><span class="n">OverrideOutput</span><span class="p">.</span><span class="n">IsValid</span><span class="p">())</span>
+	<span class="p">{</span>
+		<span class="n">FCopyRectPS</span><span class="o">::</span><span class="n">FParameters</span><span class="o">*</span> <span class="n">Parameters</span> <span class="o">=</span> <span class="n">GraphBuilder</span><span class="p">.</span><span class="n">AllocParameters</span><span class="o">&lt;</span><span class="n">FCopyRectPS</span><span class="o">::</span><span class="n">FParameters</span><span class="o">&gt;</span><span class="p">();</span>
+		<span class="n">Parameters</span><span class="o">-&gt;</span><span class="n">InputTexture</span> <span class="o">=</span> <span class="n">InOutInputs</span><span class="p">.</span><span class="n">GetInput</span><span class="p">(</span><span class="n">EPostProcessMaterialInput</span><span class="o">::</span><span class="n">SceneColor</span><span class="p">).</span><span class="n">Texture</span><span class="p">;</span>
+		<span class="n">Parameters</span><span class="o">-&gt;</span><span class="n">InputSampler</span> <span class="o">=</span> <span class="n">TStaticSamplerState</span><span class="o">&lt;&gt;::</span><span class="n">GetRHI</span><span class="p">();</span>
+		<span class="n">Parameters</span><span class="o">-&gt;</span><span class="n">RenderTargets</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">InOutInputs</span><span class="p">.</span><span class="n">OverrideOutput</span><span class="p">.</span><span class="n">GetRenderTargetBinding</span><span class="p">();</span>
+
+		<span class="k">const</span> <span class="n">FGlobalShaderMap</span><span class="o">*</span> <span class="n">GlobalShaderMap</span> <span class="o">=</span> <span class="n">GetGlobalShaderMap</span><span class="p">(</span><span class="n">View</span><span class="p">.</span><span class="n">FeatureLevel</span><span class="p">);</span>
+
+		<span class="n">TShaderMapRef</span><span class="o">&lt;</span><span class="n">FCopyRectPS</span><span class="o">&gt;</span> <span class="n">CopyPixelShader</span><span class="p">(</span><span class="n">GlobalShaderMap</span><span class="p">);</span>
+		<span class="n">TShaderMapRef</span><span class="o">&lt;</span><span class="n">FScreenPassVS</span><span class="o">&gt;</span> <span class="n">ScreenPassVS</span><span class="p">(</span><span class="n">GlobalShaderMap</span><span class="p">);</span>
+
+		<span class="k">const</span> <span class="n">FScreenPassTextureViewport</span> <span class="n">InputViewport</span><span class="p">(</span><span class="n">InOutInputs</span><span class="p">.</span><span class="n">GetInput</span><span class="p">(</span><span class="n">EPostProcessMaterialInput</span><span class="o">::</span><span class="n">SceneColor</span><span class="p">));</span>
+		<span class="k">const</span> <span class="n">FScreenPassTextureViewport</span> <span class="n">OutputViewport</span><span class="p">(</span><span class="n">InOutInputs</span><span class="p">.</span><span class="n">OverrideOutput</span><span class="p">);</span>
+
+		<span class="n">FRHIBlendState</span><span class="o">*</span> <span class="n">CopyBlendState</span> <span class="o">=</span> <span class="n">FScreenPassPipelineState</span><span class="o">::</span><span class="n">FDefaultBlendState</span><span class="o">::</span><span class="n">GetRHI</span><span class="p">();</span>
+		<span class="n">FRHIDepthStencilState</span><span class="o">*</span> <span class="n">DepthStencilState</span> <span class="o">=</span> <span class="n">FScreenPassPipelineState</span><span class="o">::</span><span class="n">FDefaultDepthStencilState</span><span class="o">::</span><span class="n">GetRHI</span><span class="p">();</span>
+		<span class="n">AddDrawScreenPass</span><span class="p">(</span><span class="n">GraphBuilder</span><span class="p">,</span> <span class="n">FRDGEventName</span><span class="p">(</span><span class="n">TEXT</span><span class="p">(</span><span class="s">"ReturnUntouchedSceneColorForPostProcessing"</span><span class="p">)),</span> <span class="n">ViewInfo</span><span class="p">,</span> <span class="n">OutputViewport</span><span class="p">,</span> <span class="n">InputViewport</span><span class="p">,</span> <span class="n">ScreenPassVS</span><span class="p">,</span> <span class="n">CopyPixelShader</span><span class="p">,</span> <span class="n">CopyBlendState</span><span class="p">,</span> <span class="n">DepthStencilState</span><span class="p">,</span> <span class="n">Parameters</span><span class="p">,</span> <span class="n">EScreenPassDrawFlags</span><span class="o">::</span><span class="n">None</span><span class="p">);</span>
+
+		<span class="k">return</span> <span class="n">InOutInputs</span><span class="p">.</span><span class="n">OverrideOutput</span><span class="p">;</span>
+	<span class="p">}</span>
+	<span class="k">else</span>
+	<span class="p">{</span>
+		<span class="cm">/** We don't want to modify scene texture in any way. We just want it to be passed back onto the next stage. */</span>
+		<span class="n">FScreenPassTexture</span> <span class="n">SceneTexture</span> <span class="o">=</span> <span class="k">const_cast</span><span class="o">&lt;</span><span class="n">FScreenPassTexture</span><span class="o">&amp;&gt;</span><span class="p">(</span><span class="n">InOutInputs</span><span class="p">.</span><span class="n">Textures</span><span class="p">[(</span><span class="n">uint32</span><span class="p">)</span><span class="n">EPostProcessMaterialInput</span><span class="o">::</span><span class="n">SceneColor</span><span class="p">]);</span>
+		<span class="k">return</span> <span class="n">SceneTexture</span><span class="p">;</span>
+	<span class="p">}</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></pre></figure> <h1 id="download-links">Download Links</h1> <ul> <li><a href="https://github.com/nicholas477/MultipassPP">Plugin Link</a></li> </ul>]]></content><author><name></name></author><summary type="html"><![CDATA[Overview]]></summary></entry><entry><title type="html">Asynchronously Reading Render Targets Using Fences</title><link href="https://nicholas477.github.io//blog/2023/reading-rt/" rel="alternate" type="text/html" title="Asynchronously Reading Render Targets Using Fences"/><published>2023-09-15T16:40:16+00:00</published><updated>2023-09-15T16:40:16+00:00</updated><id>https://nicholas477.github.io//blog/2023/reading-rt</id><content type="html" xml:base="https://nicholas477.github.io//blog/2023/reading-rt/"><![CDATA[<p><a href="https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Source/Runtime/Engine/Private/UnrealClient.cpp#L61">Unreal has a built-in function for reading pixels from a render target</a> but its awful. This single call blocks the game thread and can take milliseconds to complete since it flushes the RHI command queue.</p> <div class="row justify-content-sm-center"> <div class="col-sm mt-3 mt-md-0"> <figure> <picture> <source class="responsive-img-srcset" media="(max-width: 480px)" srcset="/assets/img/read-pixels-sycnhronous-480.webp"/> <source class="responsive-img-srcset" media="(max-width: 800px)" srcset="/assets/img/read-pixels-sycnhronous-800.webp"/> <source class="responsive-img-srcset" media="(max-width: 1400px)" srcset="/assets/img/read-pixels-sycnhronous-1400.webp"/> <img src="/assets/img/read-pixels-sycnhronous.png" class="img-fluid rounded z-depth-1" width="auto" height="auto" title="Synchronous Pixel Reading" onerror="this.onerror=null; $('.responsive-img-srcset').remove();"/> </picture> </figure> </div> </div> <div class="caption"> Calling this function a single time took the blueprint CPU time for this example scene from a few microseconds to 4 milliseconds(!!!) </div> <p>I found other people complaining on the forums about this, but I couldn’t find any workarounds online. So I ended up digging into the engine and found some places where Unreal reads back a RT to the CPU <a href="https://github.com/EpicGames/UnrealEngine/blob/5ccd1d8b91c944d275d04395a037636837de2c56/Engine/Plugins/Experimental/GPULightmass/Source/GPULightmass/Private/Scene/Scene.cpp#L1733">using a different method</a>. The method they use involves creating a temporary texture with the <code class="language-plaintext highlighter-rouge">CPUReadback</code> flag, copying the RT to that texture, and then mapping and reading the temp texture. On first glance, it seems like it avoids the synchronization issues that <code class="language-plaintext highlighter-rouge">FRenderTarget::ReadPixels</code> has.</p> <p>Unfortunately, the mapping function this method uses, <code class="language-plaintext highlighter-rouge">FRHICommandListImmediate::MapStagingSurface</code>, still flushes the command list. But I dug into the engine code a bit more and found out that the function actually calls <code class="language-plaintext highlighter-rouge">FDynamicRHI::RHIMapStagingSurface</code> after flushing. Therefore you can get around flushing by just using <code class="language-plaintext highlighter-rouge">FDynamicRHI::RHIMapStagingSurface</code> instead.</p> <p>But using this function presents yet another problem. Since this function doesn’t flush the command queue you can run into GPU/CPU synchronization issues. If you call <code class="language-plaintext highlighter-rouge">MapStagingSurface</code> right after the texture copy, then you’ll end up reading garbage or old data. This is where <a href="https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nn-d3d12-id3d12fence">render fences</a> come in. If you’re unfamiliar with what a render fence is, it’s an object you can push onto the command queue that signals when the commands preceding it are completed by the GPU. On the CPU side, you can poll the fence to check if its done or wait for it to be done. Using this, you can avoid flushing the GPU and instead just periodically check if the commands are done.</p> <p>So to avoid the aforementioned flush, I set up my texture creation and copy to use a render fence:</p> <figure class="highlight"><pre><code class="language-c--" data-lang="c++"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+</pre></td><td class="code"><pre><span class="n">FRHIResourceCreateInfo</span> <span class="nf">CreateInfo</span><span class="p">(</span><span class="n">TEXT</span><span class="p">(</span><span class="s">"AsyncRTReadback"</span><span class="p">));</span>
+<span class="n">FTexture2DRHIRef</span> <span class="n">AsyncReadTexture</span> <span class="o">=</span> <span class="n">RHICreateTexture2D</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">TextureRHI</span><span class="o">-&gt;</span><span class="n">GetFormat</span><span class="p">(),</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">TexCreate_CPUReadback</span><span class="p">,</span> <span class="n">ERHIAccess</span><span class="o">::</span><span class="n">CopyDest</span><span class="p">,</span> <span class="n">CreateInfo</span><span class="p">);</span>
+
+<span class="n">FRHICopyTextureInfo</span> <span class="n">CopyTextureInfo</span><span class="p">;</span>
+<span class="n">CopyTextureInfo</span><span class="p">.</span><span class="n">Size</span> <span class="o">=</span> <span class="n">FIntVector</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">);</span>
+<span class="n">CopyTextureInfo</span><span class="p">.</span><span class="n">SourceMipIndex</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="n">CopyTextureInfo</span><span class="p">.</span><span class="n">DestMipIndex</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="n">CopyTextureInfo</span><span class="p">.</span><span class="n">SourcePosition</span> <span class="o">=</span> <span class="n">FIntVector</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">Y</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+<span class="n">CopyTextureInfo</span><span class="p">.</span><span class="n">DestPosition</span> <span class="o">=</span> <span class="n">FIntVector</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+
+<span class="n">RHICmdList</span><span class="p">.</span><span class="n">Transition</span><span class="p">(</span><span class="n">FRHITransitionInfo</span><span class="p">(</span><span class="n">TextureRHI</span><span class="p">,</span> <span class="n">ERHIAccess</span><span class="o">::</span><span class="n">Unknown</span><span class="p">,</span> <span class="n">ERHIAccess</span><span class="o">::</span><span class="n">CopySrc</span><span class="p">));</span>
+<span class="n">RHICmdList</span><span class="p">.</span><span class="n">CopyTexture</span><span class="p">(</span><span class="n">TextureRHI</span><span class="p">,</span> <span class="n">AsyncReadTexture</span><span class="p">,</span> <span class="n">CopyTextureInfo</span><span class="p">);</span>
+
+<span class="n">RHICmdList</span><span class="p">.</span><span class="n">Transition</span><span class="p">(</span><span class="n">FRHITransitionInfo</span><span class="p">(</span><span class="n">AsyncReadTexture</span><span class="p">,</span> <span class="n">ERHIAccess</span><span class="o">::</span><span class="n">CopyDest</span><span class="p">,</span> <span class="n">ERHIAccess</span><span class="o">::</span><span class="n">CopySrc</span><span class="p">));</span>
+
+<span class="n">FGPUFenceRHIRef</span> <span class="n">Fence</span> <span class="o">=</span> <span class="n">RHICreateGPUFence</span><span class="p">(</span><span class="n">TEXT</span><span class="p">(</span><span class="s">"AsyncRTReadback"</span><span class="p">));</span>
+<span class="n">RHICmdList</span><span class="p">.</span><span class="n">WriteGPUFence</span><span class="p">(</span><span class="n">Fence</span><span class="p">);</span>
+</pre></td></tr></tbody></table></code></pre></figure> <p>And to make sure the map runs after the texture is copied I just held a reference to the temporary texture and the render fence, polled the fence on game tick, and <em>then</em> mapped the texture read.</p> <figure class="highlight"><pre><code class="language-c--" data-lang="c++"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+</pre></td><td class="code"><pre><span class="kt">void</span> <span class="n">UAsyncReadRTAction</span><span class="o">::</span><span class="n">Tick</span><span class="p">()</span>
+<span class="p">{</span>
+	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">ReadRTData</span><span class="o">-&gt;</span><span class="n">FinishedRead</span><span class="p">)</span>
+	<span class="p">{</span>
+        <span class="n">ENQUEUE_RENDER_COMMAND</span><span class="p">(</span><span class="n">FReadRTAsync</span><span class="p">)([</span><span class="n">WeakThis</span> <span class="o">=</span> <span class="n">TWeakObjectPtr</span><span class="o">&lt;</span><span class="n">UAsyncReadRTAction</span><span class="o">&gt;</span><span class="p">(</span><span class="k">this</span><span class="p">),</span> <span class="n">ReadData</span> <span class="o">=</span> <span class="n">ReadRTData</span><span class="p">](</span><span class="n">FRHICommandListImmediate</span><span class="o">&amp;</span> <span class="n">RHICmdList</span><span class="p">)</span>
+		<span class="p">{</span>
+			<span class="c1">// Return if we haven't finished the texture create and copy commands</span>
+			<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">ReadData</span><span class="o">-&gt;</span><span class="n">TextureFence</span><span class="p">.</span><span class="n">IsValid</span><span class="p">()</span> <span class="o">||</span> <span class="o">!</span><span class="n">ReadData</span><span class="o">-&gt;</span><span class="n">TextureFence</span><span class="o">-&gt;</span><span class="n">Poll</span><span class="p">())</span>
+			<span class="p">{</span>
+				<span class="k">return</span><span class="p">;</span>
+			<span class="p">}</span>
+
+			<span class="kt">void</span><span class="o">*</span> <span class="n">OutputBuffer</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+			<span class="n">int32</span> <span class="n">Width</span><span class="p">;</span> <span class="n">int32</span> <span class="n">Height</span><span class="p">;</span>
+			<span class="n">GDynamicRHI</span><span class="o">-&gt;</span><span class="n">RHIMapStagingSurface</span><span class="p">(</span><span class="n">ReadData</span><span class="o">-&gt;</span><span class="n">Texture</span><span class="p">,</span> <span class="n">ReadData</span><span class="o">-&gt;</span><span class="n">TextureFence</span><span class="p">,</span> <span class="n">OutputBuffer</span><span class="p">,</span> <span class="n">Width</span><span class="p">,</span> <span class="n">Height</span><span class="p">,</span> <span class="n">RHICmdList</span><span class="p">.</span><span class="n">GetGPUMask</span><span class="p">().</span><span class="n">ToIndex</span><span class="p">());</span>
+			<span class="p">{</span>
+				<span class="n">ReadPixel</span><span class="p">(</span><span class="n">Width</span><span class="p">,</span> <span class="n">Height</span><span class="p">,</span> <span class="n">OutputBuffer</span><span class="p">,</span> <span class="n">ReadData</span><span class="o">-&gt;</span><span class="n">Texture</span><span class="o">-&gt;</span><span class="n">GetFormat</span><span class="p">(),</span> <span class="n">ReadData</span><span class="o">-&gt;</span><span class="n">PixelColor</span><span class="p">);</span>
+			<span class="p">}</span>
+			<span class="n">RHICmdList</span><span class="p">.</span><span class="n">UnmapStagingSurface</span><span class="p">(</span><span class="n">ReadData</span><span class="o">-&gt;</span><span class="n">Texture</span><span class="p">);</span>
+			<span class="n">ReadData</span><span class="o">-&gt;</span><span class="n">FinishedRead</span> <span class="o">=</span> <span class="nb">true</span><span class="p">;</span>
+		<span class="p">});</span>
+	<span class="p">}</span>
+	<span class="k">else</span>
+	<span class="p">{</span>
+		<span class="n">OnReadRenderTarget</span><span class="p">.</span><span class="n">Broadcast</span><span class="p">(</span><span class="n">ReadRTData</span><span class="o">-&gt;</span><span class="n">PixelColor</span><span class="p">);</span>
+		<span class="n">SetReadyToDestroy</span><span class="p">();</span>
+	<span class="p">}</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></pre></figure> <p>Bringing all this together, you can take RT pixel reading from a few milliseconds down to about 40 microseconds of total CPU time. If you cache the temporary texture instead of creating it every read you can probably shave off another 20 microseconds, but this is good enough for me. The big tradeoff to using this asynchronous method is that the read now takes 3 frames to complete instead of being done in the same frame, so write your code with that in mind.</p> <div class="row justify-content-sm-center"> <div class="col-sm mt-3 mt-md-0"> <figure> <picture> <source class="responsive-img-srcset" media="(max-width: 480px)" srcset="/assets/img/read-pixels-asycnhronous-480.webp"/> <source class="responsive-img-srcset" media="(max-width: 800px)" srcset="/assets/img/read-pixels-asycnhronous-800.webp"/> <source class="responsive-img-srcset" media="(max-width: 1400px)" srcset="/assets/img/read-pixels-asycnhronous-1400.webp"/> <img src="/assets/img/read-pixels-asycnhronous.png" class="img-fluid rounded z-depth-1" width="auto" height="auto" title="Asynchronous Pixel Reading" onerror="this.onerror=null; $('.responsive-img-srcset').remove();"/> </picture> </figure> </div> </div> <div class="caption"> The first highlighted bar is the texture creation/copying kicking off, and the rest of the bars are checking if the aforementioned commands are done. Since this method polls the render fence on tick, the CPU isn't stalled waiting for the GPU to catch up. </div> <p>The code for this asynchronous method is linked below. The plugin is basically just a <a href="https://github.com/nicholas477/AsyncReadRT/blob/main/Source/AsyncReadRT/Private/AsyncReadRTAction.cpp">single blueprint node</a> that kicks off the texture creation/copy command, checks on tick if they’re done, then maps the texture and copies it. The node is called <code class="language-plaintext highlighter-rouge">Async Read Render Target</code>.</p> <h1 id="download-links">Download Links</h1> <ul> <li><a href="https://github.com/nicholas477/AsyncReadRT/">Plugin Link</a></li> </ul>]]></content><author><name></name></author><summary type="html"><![CDATA[Unreal has a built-in function for reading pixels from a render target but its awful. This single call blocks the game thread and can take milliseconds to complete since it flushes the RHI command queue.]]></summary></entry><entry><title type="html">Unreal UObject Json Serialization</title><link href="https://nicholas477.github.io//blog/2023/json-serialization/" rel="alternate" type="text/html" title="Unreal UObject Json Serialization"/><published>2023-05-07T16:40:16+00:00</published><updated>2023-05-07T16:40:16+00:00</updated><id>https://nicholas477.github.io//blog/2023/json-serialization</id><content type="html" xml:base="https://nicholas477.github.io//blog/2023/json-serialization/"><![CDATA[<p>I was working on an analytics collector in Unreal and I wasn’t very happy with the system they have in place now, which uses function calls to record events. Each event is either a key/value pair or a key/dict pair, and you have to log each pair manually using function calls. A few lines of json</p> <figure class="highlight"><pre><code class="language-json" data-lang="json"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+</pre></td><td class="code"><pre><span class="p">{</span><span class="w">
+	</span><span class="nl">"sessionId"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"e26380784eff322fd6cb7fb2d145d404-2023.06.24-15.32.43"</span><span class="p">,</span><span class="w">
+	</span><span class="nl">"userId"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"e26380784eff322fd6cb7fb2d145d404"</span><span class="p">,</span><span class="w">
+	</span><span class="nl">"events"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+		</span><span class="p">{</span><span class="w">
+			</span><span class="nl">"eventName"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"Build"</span><span class="w">
+</span><span class="p">,</span><span class="w">			</span><span class="nl">"attributes"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+			</span><span class="p">{</span><span class="w">
+				</span><span class="nl">"name"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"Version"</span><span class="p">,</span><span class="w">
+				</span><span class="nl">"value"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"++UE5+Release-5.2-CL-25360045"</span><span class="w">
+			</span><span class="p">}</span><span class="w">
+			</span><span class="p">,</span><span class="w">
+			</span><span class="p">{</span><span class="w">
+				</span><span class="nl">"name"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"PlatformName"</span><span class="p">,</span><span class="w">
+				</span><span class="nl">"value"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"Windows"</span><span class="w">
+			</span><span class="p">}</span><span class="w">
+			</span><span class="p">,</span><span class="w">
+			</span><span class="p">{</span><span class="w">
+				</span><span class="nl">"name"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"PlatformUserName"</span><span class="p">,</span><span class="w">
+				</span><span class="nl">"value"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"nicholas477"</span><span class="w">
+			</span><span class="p">}</span><span class="w">
+			</span><span class="p">,</span><span class="w">
+			</span><span class="p">{</span><span class="w">
+				</span><span class="nl">"name"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"Config"</span><span class="p">,</span><span class="w">
+				</span><span class="nl">"value"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"Development"</span><span class="w">
+			</span><span class="p">}</span><span class="w">
+			</span><span class="p">]</span><span class="w">
+		</span><span class="p">}</span><span class="w">
+</span><span class="p">,</span><span class="w">
+		</span><span class="p">{</span><span class="w">
+			</span><span class="nl">"eventName"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"UserSettings"</span><span class="w">
+</span><span class="p">,</span><span class="w">			</span><span class="nl">"attributes"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+			</span><span class="p">{</span><span class="w">
+				</span><span class="nl">"name"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"OverallScalability"</span><span class="p">,</span><span class="w">
+				</span><span class="nl">"value"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"Epic"</span><span class="w">
+			</span><span class="p">}</span><span class="w">
+			</span><span class="p">,</span><span class="w">
+			</span><span class="p">{</span><span class="w">
+				</span><span class="nl">"name"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"DesktopResolution"</span><span class="p">,</span><span class="w">
+				</span><span class="nl">"value"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"X=2560 Y=1440"</span><span class="w">
+			</span><span class="p">}</span><span class="w">
+			</span><span class="p">]</span><span class="w">
+		</span><span class="p">}</span><span class="w">
+	</span><span class="p">]</span><span class="w">
+</span><span class="p">}</span>
+</pre></td></tr></tbody></table></code></pre></figure> <p>turns into this spaghetti nightmare:</p> <div class="row"> <div class="col-sm mt-3 mt-md-0"> <figure> <picture> <source class="responsive-img-srcset" media="(max-width: 480px)" srcset="/assets/img/json-serialization/event-recording-480.webp"/> <source class="responsive-img-srcset" media="(max-width: 800px)" srcset="/assets/img/json-serialization/event-recording-800.webp"/> <source class="responsive-img-srcset" media="(max-width: 1400px)" srcset="/assets/img/json-serialization/event-recording-1400.webp"/> <img src="/assets/img/json-serialization/event-recording.png" class="img-fluid rounded z-depth-1" width="auto" height="auto" title="event recording" onerror="this.onerror=null; $('.responsive-img-srcset').remove();"/> </picture> </figure> </div> </div> <p>It’s an odd design choice for an engine that has serialization built in. So I decided to use that built in serialization and write my own analytics system that serializes objects to json and sends it wherever. But I noticed that while Unreal has support for UStruct serialization to json, it does not have support for UObjects. So I wrote a plugin for that.</p> <p>Since the property to json serialization is already included in the engine, the object serialization code itself is pretty short, about 100 lines total.</p> <figure class="highlight"><pre><code class="language-c--" data-lang="c++"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+66
+67
+68
+69
+70
+71
+72
+73
+74
+75
+76
+77
+78
+79
+80
+81
+82
+83
+84
+85
+86
+87
+88
+89
+90
+91
+92
+93
+94
+95
+96
+97
+98
+99
+100
+101
+102
+103
+104
+105
+106
+107
+108
+109
+110
+111
+112
+113
+</pre></td><td class="code"><pre><span class="cp">#include</span> <span class="cpf">"JsonObjectConverter.h"</span><span class="cp">
+#include</span> <span class="cpf">"UObject/UnrealType.h"</span><span class="cp">
+</span>
+<span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span> <span class="nc">T</span><span class="p">&gt;</span>
+<span class="k">static</span> <span class="n">TArray</span><span class="o">&lt;</span><span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">FJsonValue</span><span class="o">&gt;&gt;</span> <span class="n">SerializePropertyAsJsonArray</span><span class="p">(</span><span class="k">const</span> <span class="n">T</span><span class="o">*</span> <span class="n">Data</span><span class="p">,</span> <span class="n">FArrayProperty</span><span class="o">*</span> <span class="n">Property</span><span class="p">,</span> <span class="n">TSet</span><span class="o">&lt;</span><span class="k">const</span> <span class="n">UObject</span><span class="o">*&gt;&amp;</span> <span class="n">TraversedObjects</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">const</span> <span class="n">uint8</span><span class="o">*</span> <span class="n">PropData</span> <span class="o">=</span> <span class="n">Property</span><span class="o">-&gt;</span><span class="n">ContainerPtrToValuePtr</span><span class="o">&lt;</span><span class="n">uint8</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Data</span><span class="p">);</span>
+	<span class="n">FScriptArrayHelper</span> <span class="n">Helper</span><span class="p">(</span><span class="n">Property</span><span class="p">,</span> <span class="n">PropData</span><span class="p">);</span>
+	<span class="n">TArray</span><span class="o">&lt;</span><span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">FJsonValue</span><span class="o">&gt;&gt;</span> <span class="n">ValueArray</span><span class="p">;</span>
+
+	<span class="k">for</span> <span class="p">(</span><span class="n">int32</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">n</span> <span class="o">=</span> <span class="n">Helper</span><span class="p">.</span><span class="n">Num</span><span class="p">();</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">;</span> <span class="o">++</span><span class="n">i</span><span class="p">)</span>
+	<span class="p">{</span>
+		<span class="k">const</span> <span class="n">uint8</span><span class="o">*</span> <span class="n">InnerPropData</span> <span class="o">=</span> <span class="n">Helper</span><span class="p">.</span><span class="n">GetRawPtr</span><span class="p">(</span><span class="n">i</span><span class="p">);</span>
+		<span class="k">if</span> <span class="p">(</span><span class="n">FArrayProperty</span><span class="o">*</span> <span class="n">ArrayProperty</span> <span class="o">=</span> <span class="n">CastField</span><span class="o">&lt;</span><span class="n">FArrayProperty</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Property</span><span class="o">-&gt;</span><span class="n">Inner</span><span class="p">))</span> <span class="c1">// Array</span>
+		<span class="p">{</span>
+			<span class="n">TArray</span><span class="o">&lt;</span><span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">FJsonValue</span><span class="o">&gt;&gt;</span> <span class="n">InnerArray</span> <span class="o">=</span> <span class="n">SerializePropertyAsJsonArray</span><span class="p">(</span><span class="n">InnerPropData</span><span class="p">,</span> <span class="n">ArrayProperty</span><span class="p">,</span> <span class="n">TraversedObjects</span><span class="p">);</span>
+			<span class="n">ValueArray</span><span class="p">.</span><span class="n">Emplace</span><span class="p">(</span><span class="k">new</span> <span class="n">FJsonValueArray</span><span class="p">(</span><span class="n">InnerArray</span><span class="p">));</span>
+		<span class="p">}</span>
+		<span class="k">else</span> <span class="nf">if</span> <span class="p">(</span><span class="n">FStructProperty</span><span class="o">*</span> <span class="n">StructProperty</span> <span class="o">=</span> <span class="n">CastField</span><span class="o">&lt;</span><span class="n">FStructProperty</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Property</span><span class="o">-&gt;</span><span class="n">Inner</span><span class="p">))</span> <span class="c1">// Struct</span>
+		<span class="p">{</span>
+			<span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">FJsonObject</span><span class="o">&gt;</span> <span class="n">StructObject</span> <span class="o">=</span> <span class="n">MakeShareable</span><span class="p">(</span><span class="k">new</span> <span class="n">FJsonObject</span><span class="p">);</span>
+			<span class="k">const</span> <span class="n">uint8</span><span class="o">*</span> <span class="n">StructPropData</span> <span class="o">=</span> <span class="n">StructProperty</span><span class="o">-&gt;</span><span class="n">ContainerPtrToValuePtr</span><span class="o">&lt;</span><span class="n">uint8</span><span class="o">&gt;</span><span class="p">(</span><span class="n">InnerPropData</span><span class="p">);</span>
+			<span class="k">for</span> <span class="p">(</span><span class="n">TFieldIterator</span><span class="o">&lt;</span><span class="n">FProperty</span><span class="o">&gt;</span> <span class="n">PropertyItr</span><span class="p">(</span><span class="n">StructProperty</span><span class="o">-&gt;</span><span class="n">Struct</span><span class="p">);</span> <span class="n">PropertyItr</span><span class="p">;</span> <span class="o">++</span><span class="n">PropertyItr</span><span class="p">)</span>
+			<span class="p">{</span>
+				<span class="n">SerializePropertyAsJsonObjectField</span><span class="p">((</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">StructPropData</span><span class="p">,</span> <span class="n">StructObject</span><span class="p">,</span> <span class="o">*</span><span class="n">PropertyItr</span><span class="p">,</span> <span class="n">TraversedObjects</span><span class="p">);</span>
+			<span class="p">}</span>
+			<span class="n">ValueArray</span><span class="p">.</span><span class="n">Emplace</span><span class="p">(</span><span class="k">new</span> <span class="nf">FJsonValueObject</span><span class="p">(</span><span class="n">StructObject</span><span class="p">));</span>
+		<span class="p">}</span>
+		<span class="k">else</span> <span class="nf">if</span> <span class="p">(</span><span class="n">FObjectProperty</span><span class="o">*</span> <span class="n">ObjectProperty</span> <span class="o">=</span> <span class="n">CastField</span><span class="o">&lt;</span><span class="n">FObjectProperty</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Property</span><span class="o">-&gt;</span><span class="n">Inner</span><span class="p">))</span> <span class="c1">// Object</span>
+		<span class="p">{</span>
+			<span class="k">const</span> <span class="n">UObject</span><span class="o">*</span> <span class="n">SubObject</span> <span class="o">=</span> <span class="n">ObjectProperty</span><span class="o">-&gt;</span><span class="n">GetObjectPropertyValue_InContainer</span><span class="p">(</span><span class="n">InnerPropData</span><span class="p">);</span>
+			<span class="k">if</span> <span class="p">(</span><span class="n">SubObject</span><span class="o">-&gt;</span><span class="n">IsValidLowLevel</span><span class="p">()</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">TraversedObjects</span><span class="p">.</span><span class="n">Contains</span><span class="p">(</span><span class="n">SubObject</span><span class="p">))</span>
+			<span class="p">{</span>
+				<span class="n">TraversedObjects</span><span class="p">.</span><span class="n">Add</span><span class="p">(</span><span class="n">SubObject</span><span class="p">);</span>
+				<span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">FJsonObject</span><span class="o">&gt;</span> <span class="n">JsonSubObject</span> <span class="o">=</span> <span class="n">MakeShared</span><span class="o">&lt;</span><span class="n">FJsonObject</span><span class="o">&gt;</span><span class="p">();</span>
+				<span class="k">for</span> <span class="p">(</span><span class="n">TFieldIterator</span><span class="o">&lt;</span><span class="n">FProperty</span><span class="o">&gt;</span> <span class="n">PropertyItr</span><span class="p">(</span><span class="n">SubObject</span><span class="o">-&gt;</span><span class="n">GetClass</span><span class="p">());</span> <span class="n">PropertyItr</span><span class="p">;</span> <span class="o">++</span><span class="n">PropertyItr</span><span class="p">)</span>
+				<span class="p">{</span>
+					<span class="n">SerializePropertyAsJsonObjectField</span><span class="p">(</span><span class="n">SubObject</span><span class="p">,</span> <span class="n">JsonSubObject</span><span class="p">,</span> <span class="o">*</span><span class="n">PropertyItr</span><span class="p">,</span> <span class="n">TraversedObjects</span><span class="p">);</span>
+				<span class="p">}</span>
+				<span class="n">ValueArray</span><span class="p">.</span><span class="n">Emplace</span><span class="p">(</span><span class="k">new</span> <span class="nf">FJsonValueObject</span><span class="p">(</span><span class="n">JsonSubObject</span><span class="p">));</span>
+			<span class="p">}</span>
+		<span class="p">}</span>
+		<span class="k">else</span>
+		<span class="p">{</span>
+			<span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">FJsonValue</span><span class="o">&gt;</span> <span class="n">JsonValue</span><span class="p">;</span>
+			<span class="k">const</span> <span class="n">uint8</span><span class="o">*</span> <span class="n">InnerInnerPropData</span> <span class="o">=</span> <span class="n">Property</span><span class="o">-&gt;</span><span class="n">Inner</span><span class="o">-&gt;</span><span class="n">ContainerPtrToValuePtr</span><span class="o">&lt;</span><span class="n">uint8</span><span class="o">&gt;</span><span class="p">(</span><span class="n">InnerPropData</span><span class="p">);</span>
+			<span class="n">ValueArray</span><span class="p">.</span><span class="n">Emplace</span><span class="p">(</span><span class="n">FJsonObjectConverter</span><span class="o">::</span><span class="n">UPropertyToJsonValue</span><span class="p">(</span><span class="n">Property</span><span class="o">-&gt;</span><span class="n">Inner</span><span class="p">,</span> <span class="n">InnerInnerPropData</span><span class="p">));</span>
+		<span class="p">}</span>
+	<span class="p">}</span>
+	<span class="k">return</span> <span class="n">ValueArray</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span> <span class="nc">T</span><span class="p">&gt;</span>
+<span class="k">static</span> <span class="kt">void</span> <span class="nf">SerializePropertyAsJsonObjectField</span><span class="p">(</span><span class="k">const</span> <span class="n">T</span><span class="o">*</span> <span class="n">Data</span><span class="p">,</span> <span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">FJsonObject</span><span class="o">&gt;</span> <span class="n">OuterObject</span><span class="p">,</span> <span class="n">FProperty</span><span class="o">*</span> <span class="n">Property</span><span class="p">,</span> <span class="n">TSet</span><span class="o">&lt;</span><span class="k">const</span> <span class="n">UObject</span><span class="o">*&gt;&amp;</span> <span class="n">TraversedObjects</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">Property</span><span class="o">-&gt;</span><span class="n">GetName</span><span class="p">()</span> <span class="o">==</span> <span class="s">"UberGraphFrame"</span>
+		<span class="o">||</span> <span class="n">Property</span><span class="o">-&gt;</span><span class="n">HasAnyPropertyFlags</span><span class="p">(</span><span class="n">CPF_Transient</span><span class="p">))</span>
+	<span class="p">{</span>
+		<span class="c1">// Don't include "UberGraphFrame" or any transient properties</span>
+		<span class="k">return</span><span class="p">;</span>
+	<span class="p">}</span>
+
+	<span class="k">if</span> <span class="p">(</span><span class="n">FArrayProperty</span><span class="o">*</span> <span class="n">ArrayProperty</span> <span class="o">=</span> <span class="n">CastField</span><span class="o">&lt;</span><span class="n">FArrayProperty</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Property</span><span class="p">))</span> <span class="c1">// Array</span>
+	<span class="p">{</span>
+		<span class="n">TArray</span><span class="o">&lt;</span><span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">FJsonValue</span><span class="o">&gt;&gt;</span> <span class="n">Values</span> <span class="o">=</span> <span class="n">SerializePropertyAsJsonArray</span><span class="p">(</span><span class="n">Data</span><span class="p">,</span> <span class="n">ArrayProperty</span><span class="p">,</span> <span class="n">TraversedObjects</span><span class="p">);</span>
+		<span class="n">OuterObject</span><span class="o">-&gt;</span><span class="n">SetArrayField</span><span class="p">(</span><span class="n">Property</span><span class="o">-&gt;</span><span class="n">GetAuthoredName</span><span class="p">(),</span> <span class="n">Values</span><span class="p">);</span>
+	<span class="p">}</span>
+	<span class="k">else</span> <span class="nf">if</span> <span class="p">(</span><span class="n">FStructProperty</span><span class="o">*</span> <span class="n">StructProperty</span> <span class="o">=</span> <span class="n">CastField</span><span class="o">&lt;</span><span class="n">FStructProperty</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Property</span><span class="p">))</span> <span class="c1">// Struct</span>
+	<span class="p">{</span>
+		<span class="n">TSharedRef</span><span class="o">&lt;</span><span class="n">FJsonObject</span><span class="o">&gt;</span> <span class="n">StructObject</span> <span class="o">=</span> <span class="n">MakeShareable</span><span class="p">(</span><span class="k">new</span> <span class="n">FJsonObject</span><span class="p">);</span>
+		<span class="k">const</span> <span class="n">uint8</span><span class="o">*</span> <span class="n">PropData</span> <span class="o">=</span> <span class="n">Property</span><span class="o">-&gt;</span><span class="n">ContainerPtrToValuePtr</span><span class="o">&lt;</span><span class="n">uint8</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Data</span><span class="p">);</span>
+		<span class="k">for</span> <span class="p">(</span><span class="n">TFieldIterator</span><span class="o">&lt;</span><span class="n">FProperty</span><span class="o">&gt;</span> <span class="n">PropertyItr</span><span class="p">(</span><span class="n">StructProperty</span><span class="o">-&gt;</span><span class="n">Struct</span><span class="p">);</span> <span class="n">PropertyItr</span><span class="p">;</span> <span class="o">++</span><span class="n">PropertyItr</span><span class="p">)</span>
+		<span class="p">{</span>
+			<span class="n">SerializePropertyAsJsonObjectField</span><span class="p">((</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">PropData</span><span class="p">,</span> <span class="n">StructObject</span><span class="p">,</span> <span class="o">*</span><span class="n">PropertyItr</span><span class="p">,</span> <span class="n">TraversedObjects</span><span class="p">);</span>
+		<span class="p">}</span>
+		<span class="n">OuterObject</span><span class="o">-&gt;</span><span class="n">SetObjectField</span><span class="p">(</span><span class="n">Property</span><span class="o">-&gt;</span><span class="n">GetAuthoredName</span><span class="p">(),</span> <span class="n">StructObject</span><span class="p">.</span><span class="n">ToSharedPtr</span><span class="p">());</span>
+	<span class="p">}</span>
+	<span class="k">else</span> <span class="nf">if</span> <span class="p">(</span><span class="n">FObjectProperty</span><span class="o">*</span> <span class="n">ObjectProperty</span> <span class="o">=</span> <span class="n">CastField</span><span class="o">&lt;</span><span class="n">FObjectProperty</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Property</span><span class="p">))</span> <span class="c1">// Object</span>
+	<span class="p">{</span>
+		<span class="k">const</span> <span class="n">UObject</span><span class="o">*</span> <span class="n">SubObject</span> <span class="o">=</span> <span class="n">ObjectProperty</span><span class="o">-&gt;</span><span class="n">GetObjectPropertyValue_InContainer</span><span class="p">(</span><span class="n">Data</span><span class="p">);</span>
+		<span class="k">if</span> <span class="p">(</span><span class="n">SubObject</span><span class="o">-&gt;</span><span class="n">IsValidLowLevel</span><span class="p">()</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">TraversedObjects</span><span class="p">.</span><span class="n">Contains</span><span class="p">(</span><span class="n">SubObject</span><span class="p">))</span>
+		<span class="p">{</span>
+			<span class="n">TraversedObjects</span><span class="p">.</span><span class="n">Add</span><span class="p">(</span><span class="n">SubObject</span><span class="p">);</span>
+			<span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">FJsonObject</span><span class="o">&gt;</span> <span class="n">JsonSubObject</span> <span class="o">=</span> <span class="n">MakeShared</span><span class="o">&lt;</span><span class="n">FJsonObject</span><span class="o">&gt;</span><span class="p">();</span>
+			<span class="k">for</span> <span class="p">(</span><span class="n">TFieldIterator</span><span class="o">&lt;</span><span class="n">FProperty</span><span class="o">&gt;</span> <span class="n">PropertyItr</span><span class="p">(</span><span class="n">SubObject</span><span class="o">-&gt;</span><span class="n">GetClass</span><span class="p">());</span> <span class="n">PropertyItr</span><span class="p">;</span> <span class="o">++</span><span class="n">PropertyItr</span><span class="p">)</span>
+			<span class="p">{</span>
+				<span class="n">SerializePropertyAsJsonObjectField</span><span class="p">(</span><span class="n">SubObject</span><span class="p">,</span> <span class="n">JsonSubObject</span><span class="p">,</span> <span class="o">*</span><span class="n">PropertyItr</span><span class="p">,</span> <span class="n">TraversedObjects</span><span class="p">);</span>
+			<span class="p">}</span>
+			<span class="n">OuterObject</span><span class="o">-&gt;</span><span class="n">SetObjectField</span><span class="p">(</span><span class="n">Property</span><span class="o">-&gt;</span><span class="n">GetAuthoredName</span><span class="p">(),</span> <span class="n">JsonSubObject</span><span class="p">);</span>
+		<span class="p">}</span>
+	<span class="p">}</span>
+	<span class="k">else</span>
+	<span class="p">{</span>
+		<span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">FJsonValue</span><span class="o">&gt;</span> <span class="n">JsonValue</span><span class="p">;</span>
+		<span class="k">const</span> <span class="n">uint8</span><span class="o">*</span> <span class="n">PropData</span> <span class="o">=</span> <span class="n">Property</span><span class="o">-&gt;</span><span class="n">ContainerPtrToValuePtr</span><span class="o">&lt;</span><span class="n">uint8</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Data</span><span class="p">);</span>
+		<span class="n">OuterObject</span><span class="o">-&gt;</span><span class="n">SetField</span><span class="p">(</span><span class="n">Property</span><span class="o">-&gt;</span><span class="n">GetAuthoredName</span><span class="p">(),</span> <span class="n">FJsonObjectConverter</span><span class="o">::</span><span class="n">UPropertyToJsonValue</span><span class="p">(</span><span class="n">Property</span><span class="p">,</span> <span class="n">PropData</span><span class="p">));</span>
+	<span class="p">}</span>
+<span class="p">}</span>
+
+<span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">FJsonObject</span><span class="o">&gt;</span> <span class="n">FJsonSerializationModule</span><span class="o">::</span><span class="n">SerializeUObjectToJson</span><span class="p">(</span><span class="k">const</span> <span class="n">UObject</span><span class="o">*</span> <span class="n">Object</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="n">TSet</span><span class="o">&lt;</span><span class="k">const</span> <span class="n">UObject</span><span class="o">*&gt;</span> <span class="n">TraversedObjects</span><span class="p">;</span>
+	<span class="n">TraversedObjects</span><span class="p">.</span><span class="n">Add</span><span class="p">(</span><span class="n">Object</span><span class="p">);</span>
+
+	<span class="n">TSharedPtr</span><span class="o">&lt;</span><span class="n">FJsonObject</span><span class="o">&gt;</span> <span class="n">JsonObject</span> <span class="o">=</span> <span class="n">MakeShared</span><span class="o">&lt;</span><span class="n">FJsonObject</span><span class="o">&gt;</span><span class="p">();</span>
+
+	<span class="k">for</span> <span class="p">(</span><span class="n">TFieldIterator</span><span class="o">&lt;</span><span class="n">FProperty</span><span class="o">&gt;</span> <span class="n">PropertyItr</span><span class="p">(</span><span class="n">Object</span><span class="o">-&gt;</span><span class="n">GetClass</span><span class="p">());</span> <span class="n">PropertyItr</span><span class="p">;</span> <span class="o">++</span><span class="n">PropertyItr</span><span class="p">)</span>
+	<span class="p">{</span>
+		<span class="n">SerializePropertyAsJsonObjectField</span><span class="p">(</span><span class="n">Object</span><span class="p">,</span> <span class="n">JsonObject</span><span class="p">,</span> <span class="o">*</span><span class="n">PropertyItr</span><span class="p">,</span> <span class="n">TraversedObjects</span><span class="p">);</span>
+	<span class="p">}</span>
+
+	<span class="k">return</span> <span class="n">JsonObject</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></pre></figure> <p>I thought this would be incredibly useful for anyone else who wants to avoid the hassle of the event logging system, so I put the code up on github as a plugin. Grab it below.</p> <h1 id="download-links">Download Links</h1> <ul> <li><a href="https://github.com/nicholas477/JsonSerialization/">Plugin Link</a></li> </ul>]]></content><author><name></name></author><summary type="html"><![CDATA[Man this should be an engine feature]]></summary></entry><entry><title type="html">AngeTheGreat’s Engine Simulator in Unreal Engine</title><link href="https://nicholas477.github.io//blog/2022/engine-simulator/" rel="alternate" type="text/html" title="AngeTheGreat’s Engine Simulator in Unreal Engine"/><published>2022-10-15T16:40:16+00:00</published><updated>2022-10-15T16:40:16+00:00</updated><id>https://nicholas477.github.io//blog/2022/engine-simulator</id><content type="html" xml:base="https://nicholas477.github.io//blog/2022/engine-simulator/"><![CDATA[<h5 id="--download-links-are-at-the-bottom-of-the-article--">- Download links are at the bottom of the article -</h5> <h1 id="overview">Overview</h1> <p>I don’t remember how, but a few months ago my related videos feed got flooded with engine simulator videos. If you aren’t familiar with engine simulator, it’s a program that lets you describe engines using markup files and somehow it turns those text configs into a colorful 2d simulation and produces beautiful engine sounds. The creator’s video describes it better than I can.</p> <iframe width="100%" height="480" src="https://www.youtube.com/embed/RKT-sKtR970" title="Simulating an Entire Car Engine (yes, it makes noise)" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe> <p>You can do a youtube search for “engine simulator” and see all the <a href="https://youtu.be/PZ9ynEH9YjM">whacky</a> <a href="https://youtu.be/dMorJRNkWhU?list=PLViptfOL1RMftTKEBjvW-1tejbtFq21Cw">shit</a> other people have done with it. While these videos are cool and the simulator is incredible, it really feels like it’s begging to be put into a game engine. So that’s what I did.</p> <iframe width="100%" height="480" src="https://www.youtube.com/embed/_D4XjEji0_E" title="Engine Simulator in Unreal Engine" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture;" allowfullscreen=""></iframe> <p>I created a plugin that integrates engine simulator into Unreal Engine 5’s Chaos vehicle simulation, the plugin does this by providing a movement component that runs Engine Simulator. To use Engine Simulator to drive your Unreal Engine vehicle, you just replace your <code class="language-plaintext highlighter-rouge">ChaosWheeledVehicleMovementComponent</code> with the <code class="language-plaintext highlighter-rouge">EngineSimulatorWheeledVehicleMovementComponent</code>, and you can do this in blueprint using the subclass dropdown on your Chaos vehicle component. If you’re interested in the implementation details, I go over them in the next section.</p> <h2 id="drawbacksissues">Drawbacks/issues</h2> <p>So the plugin is honestly pretty rudimentary, and there’s some issues I can’t fix with Unreal unless I edit the engine code, which I don’t want to. But first, plugin issues:</p> <ul> <li>The clutch simulation built in to Engine Simulator is extremely basic. <ul> <li>It doesn’t model slip, it just limits torque output. I could write some code to implement a proper clutch but I don’t understand the physics side of Engine Simulator well enough to do that.</li> </ul> </li> <li>The engine visualization doesn’t show up yet. <ul> <li>This is an issue with my code, and i’m still figuring out how to implement this. In the future, I want the plugin to let people open the Engine Simulator GUI or a replica of it.</li> </ul> </li> <li>Chaos vehicles don’t handle wheel spin/wheels not in contact with the ground <ul> <li>The way the engine code is set up makes it impossible to apply torque to the wheels while in air or not in contact with the ground. I can’t fix this without making engine modifications. The plugin currently disengages the clutch when the wheels aren’t in contact or when they are spinning, and it lets the engine rev.</li> </ul> </li> </ul> <hr/> <h1 id="implementation-details">Implementation Details</h1> <p>This plugin took about a week or two from start to finish, and most of the time I spent coding the plugin was just doing annoying shit like rewriting build scripts to get Engine Simulator to compile as a static lib, and massaging the code to get Engine Simulator to work with Unreal. I’m going to skip over that stuff. There’s other tutorials covering how to integrate third party libraries into Unreal, and heaps of engine code to look at too.</p> <p>What I am going to cover is how the Chaos vehicle sim integrates with Engine Sim and vice versa.</p> <h2 id="chaos-side">Chaos side</h2> <p>Bolting on a different engine to the Chaos simulation side is surprisingly easy. The engine simulation part of Chaos vehicles is almost entirely contained in the function <code class="language-plaintext highlighter-rouge">UChaosWheeledVehicleSimulation::ProcessMechanicalSimulation(float DeltaTime)</code>:</p> <figure class="highlight"><pre><code class="language-c--" data-lang="c++"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+</pre></td><td class="code"><pre><span class="kt">void</span> <span class="n">UChaosWheeledVehicleSimulation</span><span class="o">::</span><span class="n">ProcessMechanicalSimulation</span><span class="p">(</span><span class="kt">float</span> <span class="n">DeltaTime</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">HasEngine</span><span class="p">())</span>
+	<span class="p">{</span>
+		<span class="k">auto</span><span class="o">&amp;</span> <span class="n">PEngine</span> <span class="o">=</span> <span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">GetEngine</span><span class="p">();</span>
+		<span class="k">auto</span><span class="o">&amp;</span> <span class="n">PTransmission</span> <span class="o">=</span> <span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">GetTransmission</span><span class="p">();</span>
+		<span class="k">auto</span><span class="o">&amp;</span> <span class="n">PDifferential</span> <span class="o">=</span> <span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">GetDifferential</span><span class="p">();</span>
+
+		<span class="kt">float</span> <span class="n">WheelRPM</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+		<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">I</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">I</span> <span class="o">&lt;</span> <span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">Wheels</span><span class="p">.</span><span class="n">Num</span><span class="p">();</span> <span class="n">I</span><span class="o">++</span><span class="p">)</span>
+		<span class="p">{</span>
+			<span class="k">if</span> <span class="p">(</span><span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">Wheels</span><span class="p">[</span><span class="n">I</span><span class="p">].</span><span class="n">EngineEnabled</span><span class="p">)</span>
+			<span class="p">{</span>
+				<span class="n">WheelRPM</span> <span class="o">=</span> <span class="n">FMath</span><span class="o">::</span><span class="n">Abs</span><span class="p">(</span><span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">Wheels</span><span class="p">[</span><span class="n">I</span><span class="p">].</span><span class="n">GetWheelRPM</span><span class="p">());</span>
+			<span class="p">}</span>
+		<span class="p">}</span>
+
+		<span class="kt">float</span> <span class="n">WheelSpeedRPM</span> <span class="o">=</span> <span class="n">FMath</span><span class="o">::</span><span class="n">Abs</span><span class="p">(</span><span class="n">PTransmission</span><span class="p">.</span><span class="n">GetEngineRPMFromWheelRPM</span><span class="p">(</span><span class="n">WheelRPM</span><span class="p">));</span>
+		<span class="n">PEngine</span><span class="p">.</span><span class="n">SetEngineRPM</span><span class="p">(</span><span class="n">PTransmission</span><span class="p">.</span><span class="n">IsOutOfGear</span><span class="p">(),</span> <span class="n">PTransmission</span><span class="p">.</span><span class="n">GetEngineRPMFromWheelRPM</span><span class="p">(</span><span class="n">WheelRPM</span><span class="p">));</span>
+		<span class="n">PEngine</span><span class="p">.</span><span class="n">Simulate</span><span class="p">(</span><span class="n">DeltaTime</span><span class="p">);</span>
+
+		<span class="n">PTransmission</span><span class="p">.</span><span class="n">SetEngineRPM</span><span class="p">(</span><span class="n">PEngine</span><span class="p">.</span><span class="n">GetEngineRPM</span><span class="p">());</span> <span class="c1">// needs engine RPM to decide when to change gear (automatic gearbox)</span>
+		<span class="n">PTransmission</span><span class="p">.</span><span class="n">SetAllowedToChangeGear</span><span class="p">(</span><span class="o">!</span><span class="n">VehicleState</span><span class="p">.</span><span class="n">bVehicleInAir</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">IsWheelSpinning</span><span class="p">());</span>
+		<span class="kt">float</span> <span class="n">GearRatio</span> <span class="o">=</span> <span class="n">PTransmission</span><span class="p">.</span><span class="n">GetGearRatio</span><span class="p">(</span><span class="n">PTransmission</span><span class="p">.</span><span class="n">GetCurrentGear</span><span class="p">());</span>
+
+		<span class="n">PTransmission</span><span class="p">.</span><span class="n">Simulate</span><span class="p">(</span><span class="n">DeltaTime</span><span class="p">);</span>
+
+		<span class="kt">float</span> <span class="n">TransmissionTorque</span> <span class="o">=</span> <span class="n">PTransmission</span><span class="p">.</span><span class="n">GetTransmissionTorque</span><span class="p">(</span><span class="n">PEngine</span><span class="p">.</span><span class="n">GetEngineTorque</span><span class="p">());</span>
+		<span class="k">if</span> <span class="p">(</span><span class="n">WheelSpeedRPM</span> <span class="o">&gt;</span> <span class="n">PEngine</span><span class="p">.</span><span class="n">Setup</span><span class="p">().</span><span class="n">MaxRPM</span><span class="p">)</span>
+		<span class="p">{</span>
+			<span class="n">TransmissionTorque</span> <span class="o">=</span> <span class="mf">0.</span><span class="n">f</span><span class="p">;</span>
+		<span class="p">}</span>
+
+		<span class="c1">// apply drive torque to wheels</span>
+		<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">WheelIdx</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">WheelIdx</span> <span class="o">&lt;</span> <span class="n">Wheels</span><span class="p">.</span><span class="n">Num</span><span class="p">();</span> <span class="n">WheelIdx</span><span class="o">++</span><span class="p">)</span>
+		<span class="p">{</span>
+			<span class="k">auto</span><span class="o">&amp;</span> <span class="n">PWheel</span> <span class="o">=</span> <span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">Wheels</span><span class="p">[</span><span class="n">WheelIdx</span><span class="p">];</span>
+			<span class="k">if</span> <span class="p">(</span><span class="n">PWheel</span><span class="p">.</span><span class="n">Setup</span><span class="p">().</span><span class="n">EngineEnabled</span><span class="p">)</span>
+			<span class="p">{</span>
+				<span class="n">PWheel</span><span class="p">.</span><span class="n">SetDriveTorque</span><span class="p">(</span><span class="n">TorqueMToCm</span><span class="p">(</span><span class="n">TransmissionTorque</span><span class="p">)</span> <span class="o">*</span> <span class="n">PWheel</span><span class="p">.</span><span class="n">Setup</span><span class="p">().</span><span class="n">TorqueRatio</span><span class="p">);</span>
+			<span class="p">}</span>
+			<span class="k">else</span>
+			<span class="p">{</span>
+				<span class="n">PWheel</span><span class="p">.</span><span class="n">SetDriveTorque</span><span class="p">(</span><span class="mf">0.</span><span class="n">f</span><span class="p">);</span>
+			<span class="p">}</span>
+		<span class="p">}</span>
+
+	<span class="p">}</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></pre></figure> <p>You can see where it passes sets the engine rpm at line 19, where it reads out torque at line 28, and where it passes that torque to the wheels on line 40. Super easy. So to replace the engine, you just have to subclass <code class="language-plaintext highlighter-rouge">UChaosWheeledVehicleSimulation</code>, pass in the RPM, simulate, and read out the torque and apply it to the wheels. The plugin does something a bit different.</p> <figure class="highlight"><pre><code class="language-c--" data-lang="c++"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+66
+67
+68
+69
+70
+71
+72
+73
+74
+75
+76
+</pre></td><td class="code"><pre><span class="kt">void</span> <span class="n">UEngineSimulatorWheeledVehicleSimulation</span><span class="o">::</span><span class="n">ProcessMechanicalSimulation</span><span class="p">(</span><span class="kt">float</span> <span class="n">DeltaTime</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">EngineSimulatorThread</span><span class="p">)</span>
+	<span class="p">{</span>
+		<span class="c1">// Retrieve output from the last frame</span>
+		<span class="n">FEngineSimulatorOutput</span> <span class="n">SimulationOutput</span><span class="p">;</span>
+		<span class="p">{</span>
+			<span class="n">FScopeLock</span> <span class="n">Lock</span><span class="p">(</span><span class="o">&amp;</span><span class="n">EngineSimulatorThread</span><span class="o">-&gt;</span><span class="n">OutputMutex</span><span class="p">);</span>
+			<span class="n">SimulationOutput</span> <span class="o">=</span> <span class="n">EngineSimulatorThread</span><span class="o">-&gt;</span><span class="n">Output</span><span class="p">;</span>
+		<span class="p">}</span>
+
+		<span class="c1">// Copy the output so we can sample it on this thread and on the game thread</span>
+		<span class="p">{</span>
+			<span class="n">FScopeLock</span> <span class="n">Lock</span><span class="p">(</span><span class="o">&amp;</span><span class="n">LastOutputMutex</span><span class="p">);</span>
+			<span class="n">LastOutput</span> <span class="o">=</span> <span class="n">SimulationOutput</span><span class="p">;</span>
+		<span class="p">}</span>
+
+		<span class="k">auto</span><span class="o">&amp;</span> <span class="n">PTransmission</span> <span class="o">=</span> <span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">GetTransmission</span><span class="p">();</span>
+
+		<span class="c1">// Sample wheel RPM and average it. It only samples the wheels that are in contact with the ground and not slipping</span>
+		<span class="kt">bool</span> <span class="n">bWheelsInContact</span> <span class="o">=</span> <span class="nb">false</span><span class="p">;</span>
+		<span class="kt">float</span> <span class="n">WheelRPM</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+		<span class="n">int32</span> <span class="n">SampledWheels</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+		<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">I</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">I</span> <span class="o">&lt;</span> <span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">Wheels</span><span class="p">.</span><span class="n">Num</span><span class="p">();</span> <span class="n">I</span><span class="o">++</span><span class="p">)</span>
+		<span class="p">{</span>
+			<span class="k">if</span> <span class="p">(</span><span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">Wheels</span><span class="p">[</span><span class="n">I</span><span class="p">].</span><span class="n">EngineEnabled</span> 
+				<span class="o">&amp;&amp;</span> <span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">Wheels</span><span class="p">[</span><span class="n">I</span><span class="p">].</span><span class="n">bInContact</span> 
+				<span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">Wheels</span><span class="p">[</span><span class="n">I</span><span class="p">].</span><span class="n">IsSlipping</span><span class="p">())</span>
+			<span class="p">{</span>
+				<span class="n">WheelRPM</span> <span class="o">+=</span> <span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">Wheels</span><span class="p">[</span><span class="n">I</span><span class="p">].</span><span class="n">GetWheelRPM</span><span class="p">();</span>
+				<span class="n">bWheelsInContact</span> <span class="o">=</span> <span class="nb">true</span><span class="p">;</span>
+				<span class="n">SampledWheels</span><span class="o">++</span><span class="p">;</span>
+			<span class="p">}</span>
+		<span class="p">}</span>
+
+		<span class="k">if</span> <span class="p">(</span><span class="n">SampledWheels</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
+		<span class="p">{</span>
+			<span class="n">WheelRPM</span> <span class="o">/=</span> <span class="n">SampledWheels</span><span class="p">;</span>
+		<span class="p">}</span>
+
+		<span class="c1">// Final drive ratio is controlled by Unreal, but the rest of the transmission gearing</span>
+		<span class="c1">// is controlled by engine simulator.</span>
+		<span class="c1">// </span>
+		<span class="c1">// So we apply final gearing ratio here before we pass it into engine sim. Engine sim will then apply transmission gearing</span>
+		<span class="kt">float</span> <span class="n">DynoSpeed</span> <span class="o">=</span> <span class="n">WheelRPM</span> <span class="o">*</span> <span class="n">PTransmission</span><span class="p">.</span><span class="n">Setup</span><span class="p">().</span><span class="n">FinalDriveRatio</span><span class="p">;</span>
+
+		<span class="c1">// Give engine simulator the input parameters for the simulation</span>
+		<span class="p">{</span>
+			<span class="n">EngineSimulatorThread</span><span class="o">-&gt;</span><span class="n">InputMutex</span><span class="p">.</span><span class="n">Lock</span><span class="p">();</span>
+			<span class="n">EngineSimulatorThread</span><span class="o">-&gt;</span><span class="n">Input</span><span class="p">.</span><span class="n">DeltaTime</span> <span class="o">=</span> <span class="n">DeltaTime</span><span class="p">;</span>
+			<span class="n">EngineSimulatorThread</span><span class="o">-&gt;</span><span class="n">Input</span><span class="p">.</span><span class="n">InContactWithGround</span> <span class="o">=</span> <span class="n">bWheelsInContact</span><span class="p">;</span>
+			<span class="n">EngineSimulatorThread</span><span class="o">-&gt;</span><span class="n">Input</span><span class="p">.</span><span class="n">EngineRPM</span> <span class="o">=</span> <span class="n">DynoSpeed</span><span class="p">;</span>
+			<span class="n">EngineSimulatorThread</span><span class="o">-&gt;</span><span class="n">Input</span><span class="p">.</span><span class="n">FrameCounter</span> <span class="o">=</span> <span class="n">GFrameCounter</span><span class="p">;</span>
+			<span class="n">EngineSimulatorThread</span><span class="o">-&gt;</span><span class="n">InputMutex</span><span class="p">.</span><span class="n">Unlock</span><span class="p">();</span>
+		<span class="p">}</span>
+
+		<span class="c1">// Tell the engine thread to simulate</span>
+		<span class="n">EngineSimulatorThread</span><span class="o">-&gt;</span><span class="n">Trigger</span><span class="p">();</span>
+
+		<span class="c1">// Apply drive torque to wheels</span>
+		<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">WheelIdx</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">WheelIdx</span> <span class="o">&lt;</span> <span class="n">Wheels</span><span class="p">.</span><span class="n">Num</span><span class="p">();</span> <span class="n">WheelIdx</span><span class="o">++</span><span class="p">)</span>
+		<span class="p">{</span>
+			<span class="k">auto</span><span class="o">&amp;</span> <span class="n">PWheel</span> <span class="o">=</span> <span class="n">PVehicle</span><span class="o">-&gt;</span><span class="n">Wheels</span><span class="p">[</span><span class="n">WheelIdx</span><span class="p">];</span>
+			<span class="k">if</span> <span class="p">(</span><span class="n">PWheel</span><span class="p">.</span><span class="n">Setup</span><span class="p">().</span><span class="n">EngineEnabled</span><span class="p">)</span>
+			<span class="p">{</span>
+				<span class="kt">float</span> <span class="n">OutWheelTorque</span> <span class="o">=</span> <span class="n">Chaos</span><span class="o">::</span><span class="n">TorqueMToCm</span><span class="p">(</span><span class="n">SimulationOutput</span><span class="p">.</span><span class="n">Torque</span> <span class="o">*</span> <span class="n">PTransmission</span><span class="p">.</span><span class="n">Setup</span><span class="p">().</span><span class="n">FinalDriveRatio</span><span class="p">)</span> <span class="o">*</span> <span class="n">PWheel</span><span class="p">.</span><span class="n">Setup</span><span class="p">().</span><span class="n">TorqueRatio</span><span class="p">;</span>
+				<span class="n">PWheel</span><span class="p">.</span><span class="n">SetDriveTorque</span><span class="p">(</span><span class="n">OutWheelTorque</span><span class="p">);</span>
+			<span class="p">}</span>
+			<span class="k">else</span>
+			<span class="p">{</span>
+				<span class="n">PWheel</span><span class="p">.</span><span class="n">SetDriveTorque</span><span class="p">(</span><span class="mf">0.</span><span class="n">f</span><span class="p">);</span>
+			<span class="p">}</span>
+		<span class="p">}</span>
+
+	<span class="p">}</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></pre></figure> <p>Since engine simulator is way too heavy to run synchronously, the plugin runs it asynchronously in its own thread and does the reading and writing in reverse. First it reads the output from the last frame of the simulator, then it passes in the mechanical simulation input to Engine Simulator, and finally it triggers engine simulator to start simulating <em>at the end</em> of this frame. Thus, it’ll get the output of the triggered simulation in the next frame. This means engine simulator always runs a frame behind the rest of the game, but I think it’s a totally acceptable amount of latency, and is imperceptible in game.</p> <h2 id="sound-output">Sound Output</h2> <p>The sound output from the engine is done separately from the mechanical simulation. Each engine simulator movement component contains a procedural sound output: <code class="language-plaintext highlighter-rouge">USoundWaveProcedural* OutputEngineSound</code>. This procedural sound output is set to sample from Engine Simulator using <code class="language-plaintext highlighter-rouge">void FEngineSimulator::FillAudio(USoundWaveProcedural* Wave, const int32 SamplesNeeded)</code>:</p> <figure class="highlight"><pre><code class="language-c--" data-lang="c++"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+</pre></td><td class="code"><pre><span class="kt">void</span> <span class="n">FEngineSimulator</span><span class="o">::</span><span class="n">FillAudio</span><span class="p">(</span><span class="n">USoundWaveProcedural</span><span class="o">*</span> <span class="n">Wave</span><span class="p">,</span> <span class="k">const</span> <span class="n">int32</span> <span class="n">SamplesNeeded</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="c1">// Unreal engine uses a fixed sample size.</span>
+    <span class="k">static</span> <span class="k">const</span> <span class="n">uint32</span> <span class="n">SAMPLE_SIZE</span> <span class="o">=</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">uint16</span><span class="p">);</span>
+
+    <span class="k">const</span> <span class="n">uint32</span> <span class="n">SampleCount</span> <span class="o">=</span> <span class="n">SamplesNeeded</span><span class="p">;</span>
+    <span class="kt">int16_t</span><span class="o">*</span> <span class="n">samples</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">int16_t</span><span class="p">[</span><span class="n">SamplesNeeded</span><span class="p">];</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">readSamples</span> <span class="o">=</span> <span class="n">m_simulator</span><span class="p">.</span><span class="n">readAudioOutput</span><span class="p">(</span><span class="n">SamplesNeeded</span><span class="p">,</span> <span class="n">samples</span><span class="p">);</span>
+
+    <span class="n">Wave</span><span class="o">-&gt;</span><span class="n">QueueAudio</span><span class="p">((</span><span class="k">const</span> <span class="n">uint8</span><span class="o">*</span><span class="p">)</span><span class="n">samples</span><span class="p">,</span> <span class="n">SampleCount</span> <span class="o">*</span> <span class="n">SAMPLE_SIZE</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></pre></figure> <p>Passing <code class="language-plaintext highlighter-rouge">OutputEngineSound</code> to a sound component in the game world and calling <code class="language-plaintext highlighter-rouge">play</code> on the component plays the engine simulator sound in game. From there you can apply sound modifiers to the engine noise to EQ it, reverb it, whatever. Unfortunately as of Unreal Engine 5.0.3 you can’t use <code class="language-plaintext highlighter-rouge">USoundWaveProcedural</code> as an input to a Metasound, but I think they’re fixing this in 5.1, so you’ll be able to manipulate Engine Simulator using Metasound 😎</p> <h2 id="engine-simulator-side">Engine Simulator side</h2> <p>Connecting Engine Simulator to Unreal on the Engine Simulator side was dead simple. Engine Simulator comes with a class <code class="language-plaintext highlighter-rouge">Dynamometer</code> that connects to the engine crankshaft, spins at a set rotational speed, and measures the torque output. Getting it to work was as easy as passing in the RPM, simulating, and reading out the torque.</p> <hr/> <h1 id="download-links">Download Links</h1> <ul> <li><a href="https://github.com/nicholas477/EngineSimulatorPlugin">Plugin Link</a></li> <li><a href="git@github.com:nicholas477/EngineSimulatorGame.git">Example Project Link</a></li> </ul>]]></content><author><name></name></author><summary type="html"><![CDATA[the world's greatest engine simulator meets a mediocre physics engine!]]></summary></entry></feed>
